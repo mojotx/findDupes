@@ -44,8 +44,7 @@ func main() {
 			}
 
 			hash := sha256.Sum256(data)
-			// qPath := fmt.Sprintf("%q", path)
-			// log.Debug().Str("path", qPath).Int64("size", info.Size()).Msgf("%x", hash)
+			log.Debug().Str("path", path).Int64("size", info.Size()).Msgf("%x", hash)
 			hashMap[hash] = append(hashMap[hash], path)
 			if _, found := sizeMap[hash]; !found {
 				sizeMap[hash] = info.Size()
@@ -71,7 +70,7 @@ func main() {
 			_, _ = black.Printf("%x: %d (%d)\n", hash, size, len(pathSlice)+1)
 
 			for _, fileName := range pathSlice {
-				fmt.Println(fileName)
+				fmt.Printf("%q\n", fileName)
 			}
 			fmt.Println("")
 		}
