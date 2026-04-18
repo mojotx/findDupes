@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -16,7 +17,7 @@ import (
 type HashType [32]byte
 
 func main() {
-	log.Level(zerolog.InfoLevel)
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	log.Logger = log.Output(zerolog.ConsoleWriter{
 		Out:        os.Stderr,
 		TimeFormat: time.RFC3339,
@@ -30,27 +31,40 @@ func main() {
 	walker = func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
 			log.Error().Err(err).Str("path", path).Msg("error walking file")
-			return err
+			return nil
 		}
 
-		if !info.IsDir() {
+		if !info.Mode().IsRegular() {
+			return nil
+		}
 
-			var data []byte
+		f, err := os.Open(path)
+		if err != nil {
+			log.Error().Err(err).Str("path", path).Msg("error opening file")
+			return nil
+		}
 
-			data, err = os.ReadFile(path)
-			if err != nil {
-				log.Error().Err(err).Str("path", path).Msg("error calling os.ReadFile")
-				return err
-			}
+		h := sha256.New()
+		if _, err := io.Copy(h, f); err != nil {
+			f.Close()
+			log.Error().Err(err).Str("path", path).Msg("error hashing file")
+			return nil
+		}
+		f.Close()
 
-			hash := sha256.Sum256(data)
-			log.Debug().Str("path", path).Int64("size", info.Size()).Msgf("%x", hash)
-			hashMap[hash] = append(hashMap[hash], path)
-			if _, found := sizeMap[hash]; !found {
-				sizeMap[hash] = info.Size()
-			}
+		var hash HashType
+		copy(hash[:], h.Sum(nil))
+		log.Debug().Str("path", path).Int64("size", info.Size()).Msgf("%x", hash)
+		hashMap[hash] = append(hashMap[hash], path)
+		if _, found := sizeMap[hash]; !found {
+			sizeMap[hash] = info.Size()
 		}
 		return nil
+	}
+
+	if len(os.Args) < 2 {
+		fmt.Fprintf(os.Stderr, "Usage: %s <directory> [directory...]\n", os.Args[0])
+		os.Exit(1)
 	}
 
 	for _, arg := range os.Args[1:] {
@@ -67,7 +81,7 @@ func main() {
 		pathSlice := hashMap[hash]
 		size := sizeMap[hash]
 		if len(pathSlice) > 1 {
-			_, _ = black.Printf("%x: %d (%d)\n", hash, size, len(pathSlice)+1)
+			_, _ = black.Printf("%x: %d (%d)\n", hash, size, len(pathSlice))
 
 			for _, fileName := range pathSlice {
 				fmt.Printf("%q\n", fileName)
