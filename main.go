@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -17,7 +18,22 @@ import (
 type HashType [32]byte
 
 func main() {
-	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+
+	verbose := flag.Bool("verbose", false, "print progress while scanning files")
+	flag.BoolVar(verbose, "v", false, "print progress while scanning files (shorthand)")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <directory> [directory...]\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
+	startTime := time.Now()
+
+	logLevel := zerolog.InfoLevel
+	if *verbose {
+		logLevel = zerolog.DebugLevel
+	}
+	zerolog.SetGlobalLevel(logLevel)
 	log.Logger = log.Output(zerolog.ConsoleWriter{
 		Out:        os.Stderr,
 		TimeFormat: time.RFC3339,
@@ -37,6 +53,8 @@ func main() {
 		if !info.Mode().IsRegular() {
 			return nil
 		}
+
+		log.Debug().Str("path", path).Int64("size", info.Size()).Msg("scanning file")
 
 		f, err := os.Open(path)
 		if err != nil {
@@ -62,12 +80,13 @@ func main() {
 		return nil
 	}
 
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: %s <directory> [directory...]\n", os.Args[0])
+	args := flag.Args()
+	if len(args) == 0 {
+		flag.Usage()
 		os.Exit(1)
 	}
 
-	for _, arg := range os.Args[1:] {
+	for _, arg := range args {
 		if err := filepath.Walk(arg, walker); err != nil {
 			log.Error().Err(err).Str("arg", arg).Msg("top level")
 		}
@@ -89,4 +108,7 @@ func main() {
 			fmt.Println("")
 		}
 	}
+
+	elapsedTime := time.Since(startTime)
+	log.Info().Msgf("Elapsed time: %s", elapsedTime)
 }
