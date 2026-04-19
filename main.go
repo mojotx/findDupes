@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"sync"
 	"time"
 
@@ -52,11 +53,25 @@ func main() {
 	flag.BoolVar(verbose, "v", false, "print progress while scanning files (shorthand)")
 	workers := flag.Int("workers", runtime.NumCPU(), "number of concurrent hashing workers")
 	flag.IntVar(workers, "w", runtime.NumCPU(), "number of concurrent hashing workers (shorthand)")
+	cpuprofile := flag.String("cpuprofile", "", "write CPU profile to file")
+	memprofile := flag.String("memprofile", "", "write memory profile to file")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <directory> [directory...]\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not create CPU profile")
+		}
+		defer f.Close()
+		if err := pprof.StartCPUProfile(f); err != nil {
+			log.Fatal().Err(err).Msg("could not start CPU profile")
+		}
+		defer pprof.StopCPUProfile()
+	}
 
 	startTime := time.Now()
 
@@ -97,7 +112,28 @@ func main() {
 		}
 	}
 
-	log.Info().Int("files", len(files)).Int("workers", *workers).Msg("starting concurrent hashing")
+	// Phase 1.5: Size-based pre-filter — only hash files whose size
+	// matches at least one other file. Files with a unique size cannot
+	// possibly be duplicates, so we skip the expensive hash entirely.
+	sizeCount := make(map[int64]int, len(files))
+	for _, fe := range files {
+		sizeCount[fe.size]++
+	}
+	candidates := files[:0]
+	var skipped int
+	for _, fe := range files {
+		if sizeCount[fe.size] > 1 {
+			candidates = append(candidates, fe)
+		} else {
+			skipped++
+		}
+	}
+	log.Info().
+		Int("total_files", len(files)).
+		Int("skipped_unique_size", skipped).
+		Int("candidates", len(candidates)).
+		Int("workers", *workers).
+		Msg("starting concurrent hashing")
 
 	// Phase 2: Hash files concurrently using a worker pool
 	jobs := make(chan fileEntry, *workers)
@@ -129,7 +165,7 @@ func main() {
 
 	// Send jobs to workers
 	go func() {
-		for _, fe := range files {
+		for _, fe := range candidates {
 			jobs <- fe
 		}
 		close(jobs)
@@ -165,4 +201,16 @@ func main() {
 
 	elapsedTime := time.Since(startTime)
 	log.Info().Msgf("Elapsed time: %s", elapsedTime)
+
+	if *memprofile != "" {
+		f, err := os.Create(*memprofile)
+		if err != nil {
+			log.Fatal().Err(err).Msg("could not create memory profile")
+		}
+		defer f.Close()
+		runtime.GC()
+		if err := pprof.WriteHeapProfile(f); err != nil {
+			log.Fatal().Err(err).Msg("could not write memory profile")
+		}
+	}
 }
