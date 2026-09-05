@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mojotx/findDupes/internal/dedupe"
+	"github.com/mojotx/findDupes/internal/version"
 )
 
 var (
@@ -23,6 +24,7 @@ var (
 var rootCmd = &cobra.Command{
 	Use:          "findDupes [flags] <directory> [directory...]",
 	Short:        "Find duplicate files by content hash",
+	Version:      version.Version(),
 	Args:         cobra.MinimumNArgs(1),
 	SilenceUsage: true,
 	RunE:         runFind,
