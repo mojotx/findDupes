@@ -61,6 +61,7 @@ func Find(roots []string, workers int, logger zerolog.Logger) ([]DuplicateSet, S
 	var dupes []DuplicateSet
 	for hash, paths := range hashMap {
 		if len(paths) > 1 {
+			sort.Strings(paths)
 			dupes = append(dupes, DuplicateSet{Hash: hash, Size: sizeMap[hash], Paths: paths})
 		}
 	}
@@ -73,6 +74,9 @@ func Find(roots []string, workers int, logger zerolog.Logger) ([]DuplicateSet, S
 
 // hashAll hashes candidates concurrently using a fixed-size worker pool.
 func hashAll(candidates []FileEntry, workers int, logger zerolog.Logger) []Result {
+	if workers < 1 {
+		workers = 1
+	}
 	jobs := make(chan FileEntry, workers)
 	results := make(chan Result, workers)
 

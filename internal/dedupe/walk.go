@@ -12,8 +12,12 @@ import (
 // logged and skipped; a failing root is collected and returned as a joined error.
 func WalkDirs(roots []string, logger zerolog.Logger) ([]FileEntry, error) {
 	var files []FileEntry
+	var root string
 	walker := func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
+			if path == root {
+				return err
+			}
 			logger.Error().Err(err).Str("path", path).Msg("error walking file")
 			return nil
 		}
@@ -25,7 +29,8 @@ func WalkDirs(roots []string, logger zerolog.Logger) ([]FileEntry, error) {
 	}
 
 	var errs []error
-	for _, root := range roots {
+	for _, r := range roots {
+		root = r
 		if err := filepath.Walk(root, walker); err != nil {
 			errs = append(errs, err)
 		}

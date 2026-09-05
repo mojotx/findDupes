@@ -46,11 +46,12 @@ func runFind(cmd *cobra.Command, args []string) error {
 		logLevel = zerolog.DebugLevel
 	}
 	zerolog.SetGlobalLevel(logLevel)
-	logger := log.Output(zerolog.ConsoleWriter{
+	log.Logger = log.Output(zerolog.ConsoleWriter{
 		Out:        os.Stderr,
 		TimeFormat: time.RFC3339,
 		NoColor:    false,
 	})
+	logger := log.Logger
 
 	dupes, _, err := dedupe.Find(args, workers, logger)
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/rs/zerolog"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFilterBySize(t *testing.T) {
@@ -15,12 +16,8 @@ func TestFilterBySize(t *testing.T) {
 		{Path: "c", Size: 20},
 	}
 	candidates, skipped := FilterBySize(files)
-	if skipped != 1 {
-		t.Fatalf("expected 1 skipped, got %d", skipped)
-	}
-	if len(candidates) != 2 {
-		t.Fatalf("expected 2 candidates, got %d: %+v", len(candidates), candidates)
-	}
+	require.Equal(t, 1, skipped)
+	require.Len(t, candidates, 2)
 }
 
 func TestFind(t *testing.T) {
@@ -30,21 +27,11 @@ func TestFind(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "unique.txt"), "one of a kind")
 
 	dupes, stats, err := Find([]string{dir}, 2, zerolog.Nop())
-	if err != nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if stats.TotalFiles != 3 {
-		t.Fatalf("expected 3 total files, got %d", stats.TotalFiles)
-	}
-	if stats.Skipped != 1 {
-		t.Fatalf("expected 1 skipped, got %d", stats.Skipped)
-	}
-	if len(dupes) != 1 {
-		t.Fatalf("expected 1 duplicate set, got %d: %+v", len(dupes), dupes)
-	}
-	if len(dupes[0].Paths) != 2 {
-		t.Fatalf("expected 2 paths in duplicate set, got %d: %+v", len(dupes[0].Paths), dupes[0].Paths)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 3, stats.TotalFiles)
+	require.Equal(t, 1, stats.Skipped)
+	require.Len(t, dupes, 1)
+	require.Len(t, dupes[0].Paths, 2)
 }
 
 func TestFindNoDuplicates(t *testing.T) {
@@ -53,20 +40,11 @@ func TestFindNoDuplicates(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "two.txt"), "bbb")
 
 	dupes, _, err := Find([]string{dir}, 2, zerolog.Nop())
-	if err != nil {
-		t.Fatalf("Find: %v", err)
-	}
-	if len(dupes) != 0 {
-		t.Fatalf("expected no duplicate sets, got %d: %+v", len(dupes), dupes)
-	}
+	require.NoError(t, err)
+	require.Empty(t, dupes)
 }
 
 func TestFindMissingRoot(t *testing.T) {
-	dupes, stats, err := Find([]string{filepath.Join(os.TempDir(), "definitely-missing-root")}, 2, zerolog.Nop())
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if len(dupes) != 0 || stats.TotalFiles != 0 {
-		t.Fatalf("expected no files or duplicates, got dupes=%+v stats=%+v", dupes, stats)
-	}
+	_, _, err := Find([]string{filepath.Join(os.TempDir(), "definitely-missing-root")}, 2, zerolog.Nop())
+	require.Error(t, err)
 }

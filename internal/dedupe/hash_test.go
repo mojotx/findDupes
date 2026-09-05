@@ -4,42 +4,29 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestHashFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "a.txt")
-	if err := os.WriteFile(path, []byte("hello world"), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte("hello world"), 0o600))
 
 	h1, err := HashFile(path)
-	if err != nil {
-		t.Fatalf("HashFile: %v", err)
-	}
+	require.NoError(t, err)
 	h2, err := HashFile(path)
-	if err != nil {
-		t.Fatalf("HashFile: %v", err)
-	}
-	if h1 != h2 {
-		t.Fatalf("hash of same file differs: %x vs %x", h1, h2)
-	}
+	require.NoError(t, err)
+	require.Equal(t, h1, h2, "hash of same file differs")
 
 	otherPath := filepath.Join(dir, "b.txt")
-	if err := os.WriteFile(otherPath, []byte("different content"), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	require.NoError(t, os.WriteFile(otherPath, []byte("different content"), 0o600))
 	h3, err := HashFile(otherPath)
-	if err != nil {
-		t.Fatalf("HashFile: %v", err)
-	}
-	if h1 == h3 {
-		t.Fatalf("hash of different files matched: %x", h1)
-	}
+	require.NoError(t, err)
+	require.NotEqual(t, h1, h3, "hash of different files matched")
 }
 
 func TestHashFileMissing(t *testing.T) {
-	if _, err := HashFile(filepath.Join(t.TempDir(), "missing.txt")); err == nil {
-		t.Fatal("expected error for missing file, got nil")
-	}
+	_, err := HashFile(filepath.Join(t.TempDir(), "missing.txt"))
+	require.Error(t, err)
 }
