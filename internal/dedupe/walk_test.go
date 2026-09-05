@@ -43,6 +43,20 @@ func TestWalkDirsDeduplicatesOverlappingRoots(t *testing.T) {
 	require.Len(t, files, 2)
 }
 
+func TestWalkDirsDeduplicatesRelativeAndAbsoluteRoots(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.txt"), "aaa")
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Chdir(dir)
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	files, err := WalkDirs([]string{".", dir}, zerolog.Nop())
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+}
+
 func TestWalkDirsDeduplicatesSymlinkedRoots(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "a.txt"), "aaa")
