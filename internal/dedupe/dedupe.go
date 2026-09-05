@@ -47,11 +47,9 @@ func Find(roots []string, workers int, logger zerolog.Logger) ([]DuplicateSet, S
 		Int("workers", workers).
 		Msg("starting concurrent hashing")
 
-	results := hashAll(candidates, workers, logger)
-
 	hashMap := make(map[HashType][]string)
 	sizeMap := make(map[HashType]int64)
-	for _, r := range results {
+	for r := range hashAll(candidates, workers, logger) {
 		hashMap[r.Hash] = append(hashMap[r.Hash], r.Path)
 		if _, found := sizeMap[r.Hash]; !found {
 			sizeMap[r.Hash] = r.Size
@@ -72,8 +70,9 @@ func Find(roots []string, workers int, logger zerolog.Logger) ([]DuplicateSet, S
 	return dupes, stats, nil
 }
 
-// hashAll hashes candidates concurrently using a fixed-size worker pool.
-func hashAll(candidates []FileEntry, workers int, logger zerolog.Logger) []Result {
+// hashAll hashes candidates concurrently using a fixed-size worker pool,
+// streaming results back to the caller instead of buffering them all in memory.
+func hashAll(candidates []FileEntry, workers int, logger zerolog.Logger) <-chan Result {
 	if workers < 1 {
 		workers = 1
 	}
@@ -110,9 +109,5 @@ func hashAll(candidates []FileEntry, workers int, logger zerolog.Logger) []Resul
 		close(jobs)
 	}()
 
-	all := make([]Result, 0, len(candidates))
-	for r := range results {
-		all = append(all, r)
-	}
-	return all
+	return results
 }
