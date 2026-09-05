@@ -4,7 +4,6 @@ import (
 	"errors"
 	"io/fs"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/rs/zerolog"
@@ -64,21 +63,52 @@ func WalkDirs(roots []string, logger zerolog.Logger) ([]FileEntry, error) {
 // another root in the list, so filepath.Walk is only invoked once per
 // distinct subtree even when overlapping or repeated roots are supplied.
 // roots must already be canonical (absolute, symlink-resolved) paths.
+//
+// Containment is checked with filepath.Rel against every other retained root,
+// rather than lexical sorting plus a string-prefix/adjacency check: sorting
+// does not guarantee a root's ancestor ends up adjacent to it (e.g. ".../a",
+// ".../a!", ".../a/sub" sort in that order, separating "a" from its
+// descendant "a/sub"), and a raw prefix check on "root+separator" mishandles
+// a filesystem root like "/" (producing a doubled separator). filepath.Rel is
+// component-aware, so both problems are avoided.
 func dedupeContainedRoots(roots []string) []string {
-	sorted := append([]string(nil), roots...)
-	sort.Strings(sorted)
+	unique := make([]string, 0, len(roots))
+	seen := make(map[string]struct{}, len(roots))
+	for _, r := range roots {
+		if _, ok := seen[r]; ok {
+			continue
+		}
+		seen[r] = struct{}{}
+		unique = append(unique, r)
+	}
 
-	result := make([]string, 0, len(sorted))
-	for _, r := range sorted {
-		if len(result) > 0 {
-			container := result[len(result)-1]
-			if r == container || strings.HasPrefix(r, container+string(filepath.Separator)) {
-				continue
+	result := make([]string, 0, len(unique))
+	for i, r := range unique {
+		contained := false
+		for j, other := range unique {
+			if i != j && isWithinRoot(r, other) {
+				contained = true
+				break
 			}
 		}
-		result = append(result, r)
+		if !contained {
+			result = append(result, r)
+		}
 	}
 	return result
+}
+
+// isWithinRoot reports whether path is root itself or a descendant of it.
+// Both must already be canonical (absolute, symlink-resolved) paths.
+func isWithinRoot(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // canonicalRoot resolves root to an absolute, symlink-free path so that

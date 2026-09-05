@@ -43,6 +43,37 @@ func TestWalkDirsDeduplicatesOverlappingRoots(t *testing.T) {
 	require.Len(t, files, 2)
 }
 
+func TestDedupeContainedRootsHandlesLexicallyInterleavedSibling(t *testing.T) {
+	base := string(filepath.Separator) + "base"
+	a := filepath.Join(base, "a")
+	aBang := a + "!"
+	sub := filepath.Join(a, "sub")
+
+	// "a!" sorts between "a" and "a/sub" lexically; a naive "compare only
+	// against the previously kept root" check would let "sub" slip through
+	// as a redundant, separately-walked root instead of being recognized as
+	// already covered by "a".
+	got := dedupeContainedRoots([]string{a, aBang, sub})
+	require.ElementsMatch(t, []string{a, aBang}, got)
+}
+
+func TestWalkDirsContainmentSurvivesLexicallyInterleavedSibling(t *testing.T) {
+	base := t.TempDir()
+	a := filepath.Join(base, "a")
+	aBang := filepath.Join(base, "a!")
+	sub := filepath.Join(a, "sub")
+	require.NoError(t, os.Mkdir(a, 0o755))
+	require.NoError(t, os.Mkdir(aBang, 0o755))
+	require.NoError(t, os.Mkdir(sub, 0o755))
+	writeFile(t, filepath.Join(a, "a.txt"), "aaa")
+	writeFile(t, filepath.Join(sub, "b.txt"), "bb")
+	writeFile(t, filepath.Join(aBang, "c.txt"), "cc")
+
+	files, err := WalkDirs([]string{a, aBang, sub}, zerolog.Nop())
+	require.NoError(t, err)
+	require.Len(t, files, 3)
+}
+
 func TestWalkDirsDeduplicatesRelativeAndAbsoluteRoots(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "a.txt"), "aaa")
