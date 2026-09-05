@@ -7,6 +7,42 @@
 A command-line tool that finds duplicate files by content hash (SHA-256),
 searching one or more directories concurrently.
 
+## How it works
+
+`findDupes` uses a two-stage process to avoid reading every file unnecessarily:
+
+1. It recursively walks the supplied roots and collects the path and size of
+	 each regular file. Reading file metadata is much faster than reading file
+	 contents, so this first pass is relatively inexpensive.
+2. Files whose size is unique among all discovered files are discarded because
+	 they cannot have an identical copy. Files sharing a size become candidates
+	 for content comparison.
+3. The candidates are read concurrently by a worker pool and each file is
+	 hashed with SHA-256. Files with the same hash are reported as duplicates.
+
+The size check is only a filter: files must still have matching content hashes
+to be considered duplicates. Conversely, files with different sizes are never
+read or hashed against one another.
+
+### Roots and scanning behavior
+
+- Multiple roots are supported and are scanned as one collection of files.
+- Roots are converted to absolute, symlink-resolved paths before scanning.
+	This means a root supplied through a directory symlink is scanned normally.
+- Repeated roots and overlapping roots, such as `dir dir` or `dir dir/sub`,
+	are deduplicated before walking. The same applies when roots use different
+	spellings, such as relative and absolute paths, or resolve through the same
+	symlink. Each file is therefore considered only once.
+- Only regular files are collected. Symlinks encountered within a scanned
+	directory are not followed.
+- A file that cannot be read during hashing is logged and skipped. If a root
+	cannot be resolved or walked, files successfully found under other roots are
+	still processed, but the command returns an error after printing any results.
+
+Duplicate groups are printed with their SHA-256 hash, file size, and paths. The
+paths within each group, and the groups themselves, are sorted for repeatable
+output.
+
 ## Installation
 
 Requires Go 1.25 or later. The [go.mod](go.mod) `go` directive is deliberately
