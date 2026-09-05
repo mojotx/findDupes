@@ -15,7 +15,13 @@ func FilterBySize(files []FileEntry) (candidates []FileEntry, skipped int) {
 	for _, fe := range files {
 		sizeCount[fe.Size]++
 	}
-	candidates = make([]FileEntry, 0, len(files))
+	candidateCount := 0
+	for _, count := range sizeCount {
+		if count > 1 {
+			candidateCount += count
+		}
+	}
+	candidates = make([]FileEntry, 0, candidateCount)
 	for _, fe := range files {
 		if sizeCount[fe.Size] > 1 {
 			candidates = append(candidates, fe)
