@@ -60,3 +60,16 @@ func TestFindMissingRoot(t *testing.T) {
 	_, _, err := Find([]string{filepath.Join(t.TempDir(), "definitely-missing-root")}, 2, zerolog.Nop())
 	require.Error(t, err)
 }
+
+func TestFindPartialRootFailureStillReturnsResults(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "dup1.txt"), "same content")
+	writeFile(t, filepath.Join(dir, "dup2.txt"), "same content")
+
+	missing := filepath.Join(t.TempDir(), "definitely-missing-root")
+
+	dupes, _, err := Find([]string{dir, missing}, 2, zerolog.Nop())
+	require.Error(t, err)
+	require.Len(t, dupes, 1)
+	require.Len(t, dupes[0].Paths, 2)
+}

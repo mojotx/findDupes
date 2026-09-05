@@ -28,10 +28,12 @@ func FilterBySize(files []FileEntry) (candidates []FileEntry, skipped int) {
 
 // Find walks roots, hashes candidate files concurrently across workers
 // goroutines, and returns duplicate sets sorted by hash for deterministic output.
+// If some roots fail to walk, files successfully collected from the others are
+// still processed; the walk error is returned alongside whatever results were found.
 func Find(roots []string, workers int, logger zerolog.Logger) ([]DuplicateSet, Stats, error) {
-	files, err := WalkDirs(roots, logger)
-	if err != nil {
-		return nil, Stats{}, err
+	files, walkErr := WalkDirs(roots, logger)
+	if walkErr != nil {
+		logger.Error().Err(walkErr).Msg("one or more roots could not be fully scanned")
 	}
 
 	candidates, skipped := FilterBySize(files)
@@ -39,6 +41,9 @@ func Find(roots []string, workers int, logger zerolog.Logger) ([]DuplicateSet, S
 		TotalFiles: len(files),
 		Skipped:    skipped,
 		Candidates: len(candidates),
+	}
+	if workers < 1 {
+		workers = 1
 	}
 	logger.Info().
 		Int("total_files", stats.TotalFiles).
@@ -67,7 +72,7 @@ func Find(roots []string, workers int, logger zerolog.Logger) ([]DuplicateSet, S
 		return bytes.Compare(dupes[i].Hash[:], dupes[j].Hash[:]) < 0
 	})
 
-	return dupes, stats, nil
+	return dupes, stats, walkErr
 }
 
 // hashAll hashes candidates concurrently using a fixed-size worker pool,

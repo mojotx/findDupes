@@ -54,14 +54,10 @@ func runFind(cmd *cobra.Command, args []string) error {
 	logger := log.Logger
 
 	dupes, _, err := dedupe.Find(args, workers, logger)
-	if err != nil {
-		return err
-	}
-
 	printDuplicates(dupes)
 
 	logger.Info().Msgf("Elapsed time: %s", time.Since(startTime))
-	return nil
+	return err
 }
 
 func printDuplicates(dupes []dedupe.DuplicateSet) {
