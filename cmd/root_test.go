@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"github.com/mojotx/findDupes/internal/dedupe"
 	"github.com/stretchr/testify/require"
 )
@@ -20,6 +22,25 @@ func captureStdout(t *testing.T, f func()) string {
 	os.Stdout = w
 	defer func() {
 		os.Stdout = old
+		_ = r.Close()
+		_ = w.Close()
+	}()
+	f()
+	require.NoError(t, w.Close())
+
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(out)
+}
+
+func captureStderr(t *testing.T, f func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	defer func() {
+		os.Stderr = old
 		_ = r.Close()
 		_ = w.Close()
 	}()
@@ -82,15 +103,23 @@ func TestRunFindMissingRoot(t *testing.T) {
 func TestRunFindVerbose(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("aaa"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.txt"), []byte("aaa"), 0o600))
 
 	origVerbose := verbose
+	origLogger := log.Logger
+	origLevel := zerolog.GlobalLevel()
 	verbose = true
-	t.Cleanup(func() { verbose = origVerbose })
+	t.Cleanup(func() {
+		verbose = origVerbose
+		log.Logger = origLogger
+		zerolog.SetGlobalLevel(origLevel)
+	})
 
-	_ = captureStdout(t, func() {
+	stderr := captureStderr(t, func() {
 		err := runFind(rootCmd, []string{dir})
 		require.NoError(t, err)
 	})
+	require.Contains(t, stderr, "scanning file")
 }
 
 func TestExecute(t *testing.T) {

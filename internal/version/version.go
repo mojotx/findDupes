@@ -8,13 +8,16 @@ import "runtime/debug"
 var findDupesVersion = "dev"
 
 func init() {
-	if findDupesVersion != "dev" {
-		return
+	if buildInfo, ok := debug.ReadBuildInfo(); ok {
+		findDupesVersion = versionFromBuildInfo(findDupesVersion, buildInfo)
 	}
+}
 
-	if buildInfo, ok := debug.ReadBuildInfo(); ok && buildInfo.Main.Version != "" && buildInfo.Main.Version != "(devel)" {
-		findDupesVersion = buildInfo.Main.Version
+func versionFromBuildInfo(current string, buildInfo *debug.BuildInfo) string {
+	if current != "dev" || buildInfo == nil || buildInfo.Main.Version == "" || buildInfo.Main.Version == "(devel)" {
+		return current
 	}
+	return buildInfo.Main.Version
 }
 
 // Version returns the current version of the application.
