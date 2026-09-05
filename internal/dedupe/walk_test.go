@@ -63,12 +63,10 @@ func TestWalkDirsDeduplicatesSymlinkedRoots(t *testing.T) {
 	require.NoError(t, os.Mkdir(realDir, 0o755))
 	writeFile(t, filepath.Join(realDir, "a.txt"), "aaa")
 
-	// The symlink must be an intermediate path component, not the root's final
-	// component: filepath.Walk lstats (never dereferences) the root itself, so
-	// a root that IS a symlink would just be skipped as non-regular and the
-	// test would pass vacuously regardless of EvalSymlinks. The OS resolves
-	// symlinked intermediate components transparently, so this actually
-	// exercises the dedup logic.
+	// The symlink is an intermediate path component here, not the root's final
+	// component, to exercise OS-level transparent resolution of intermediate
+	// symlinks (as opposed to WalkDirs' own root-resolution, covered by
+	// TestWalkDirsResolvesDirectorySymlinkRoot below).
 	outer := t.TempDir()
 	linkedParent := filepath.Join(outer, "linked")
 	if err := os.Symlink(base, linkedParent); err != nil {
@@ -77,6 +75,27 @@ func TestWalkDirsDeduplicatesSymlinkedRoots(t *testing.T) {
 	root2 := filepath.Join(linkedParent, "real")
 
 	files, err := WalkDirs([]string{realDir, root2}, zerolog.Nop())
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+}
+
+func TestWalkDirsResolvesDirectorySymlinkRoot(t *testing.T) {
+	realDir := t.TempDir()
+	writeFile(t, filepath.Join(realDir, "a.txt"), "aaa")
+
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(realDir, link); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+
+	// filepath.Walk lstats (never dereferences) the root it's given, so a
+	// directory symlink passed directly as a root must be resolved by
+	// WalkDirs itself before walking, or it would silently scan nothing.
+	files, err := WalkDirs([]string{link}, zerolog.Nop())
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+
+	files, err = WalkDirs([]string{realDir, link}, zerolog.Nop())
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 }
