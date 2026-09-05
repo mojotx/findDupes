@@ -9,6 +9,12 @@ searching one or more directories concurrently.
 
 ## Installation
 
+Requires Go 1.25 or later. The [go.mod](go.mod) `go` directive is deliberately
+pinned to the oldest Go version that supports the code and its dependencies,
+rather than tracking the latest compiler — this keeps the requirement low for
+contributors without needing a documented compatibility exception each time a
+newer Go is released.
+
 ```sh
 go install github.com/mojotx/findDupes@latest
 ```
