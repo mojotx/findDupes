@@ -1,4 +1,5 @@
 *.log
 *.prof
+coverage.out
 findDupes
 !*/findDupes
