@@ -12,8 +12,8 @@ searching one or more directories concurrently.
 `findDupes` uses a two-stage process (with a size-based filter between stages) to avoid reading every file unnecessarily:
 
 1. It recursively walks the supplied roots and collects the path and size of
-	 each regular file. Reading file metadata is much faster than reading file
-	 contents, so this first pass is relatively inexpensive.
+   each regular file. Reading file metadata is much faster than reading file
+   contents, so this first pass is relatively inexpensive.
 2. Files whose size is unique among all discovered files are discarded because
 	 they cannot have an identical copy. Files sharing a size become candidates
 	 for content comparison.
