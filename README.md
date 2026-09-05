@@ -9,7 +9,7 @@ searching one or more directories concurrently.
 
 ## How it works
 
-`findDupes` uses a two-stage process to avoid reading every file unnecessarily:
+`findDupes` uses a two-stage process (with a size-based filter between stages) to avoid reading every file unnecessarily:
 
 1. It recursively walks the supplied roots and collects the path and size of
 	 each regular file. Reading file metadata is much faster than reading file
