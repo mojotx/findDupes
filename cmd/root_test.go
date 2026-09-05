@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/mojotx/findDupes/internal/dedupe"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/mojotx/findDupes/internal/dedupe"
 	"github.com/stretchr/testify/require"
 )
 
