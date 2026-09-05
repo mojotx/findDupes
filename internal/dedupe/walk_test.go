@@ -43,6 +43,20 @@ func TestWalkDirsDeduplicatesOverlappingRoots(t *testing.T) {
 	require.Len(t, files, 2)
 }
 
+func TestWalkDirsDeduplicatesSymlinkedRoots(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.txt"), "aaa")
+
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+
+	files, err := WalkDirs([]string{dir, link}, zerolog.Nop())
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))

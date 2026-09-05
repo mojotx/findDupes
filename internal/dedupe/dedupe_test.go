@@ -1,7 +1,6 @@
 package dedupe
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -44,7 +43,20 @@ func TestFindNoDuplicates(t *testing.T) {
 	require.Empty(t, dupes)
 }
 
+func TestFindClampsNonPositiveWorkers(t *testing.T) {
+	for _, workers := range []int{0, -1} {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "dup1.txt"), "same content")
+		writeFile(t, filepath.Join(dir, "dup2.txt"), "same content")
+
+		dupes, _, err := Find([]string{dir}, workers, zerolog.Nop())
+		require.NoError(t, err)
+		require.Len(t, dupes, 1)
+		require.Len(t, dupes[0].Paths, 2)
+	}
+}
+
 func TestFindMissingRoot(t *testing.T) {
-	_, _, err := Find([]string{filepath.Join(os.TempDir(), "definitely-missing-root")}, 2, zerolog.Nop())
+	_, _, err := Find([]string{filepath.Join(t.TempDir(), "definitely-missing-root")}, 2, zerolog.Nop())
 	require.Error(t, err)
 }

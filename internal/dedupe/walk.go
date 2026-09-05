@@ -27,9 +27,12 @@ func WalkDirs(roots []string, logger zerolog.Logger) ([]FileEntry, error) {
 		if !info.Mode().IsRegular() {
 			return nil
 		}
-		canonical, absErr := filepath.Abs(path)
-		if absErr != nil {
-			canonical = path
+		canonical, err2 := filepath.EvalSymlinks(path)
+		if err2 != nil {
+			canonical, err2 = filepath.Abs(path)
+			if err2 != nil {
+				canonical = path
+			}
 		}
 		if _, ok := seen[canonical]; ok {
 			return nil
