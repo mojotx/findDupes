@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/fatih/color"
 	"github.com/mojotx/findDupes/internal/dedupe"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -17,11 +19,14 @@ import (
 func captureStdout(t *testing.T, f func()) string {
 	t.Helper()
 	old := os.Stdout
+	oldColorOutput := color.Output
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
 	os.Stdout = w
+	color.Output = w
 	defer func() {
 		os.Stdout = old
+		color.Output = oldColorOutput
 		_ = r.Close()
 		_ = w.Close()
 	}()
@@ -65,9 +70,7 @@ func TestPrintDuplicates(t *testing.T) {
 		printDuplicates(dupes)
 	})
 
-	// The hash/size line goes through fatih/color, which caches os.Stdout at
-	// package init time and so isn't captured by swapping os.Stdout here;
-	// only the plain fmt.Println/Printf paths are observable in out.
+	require.Contains(t, out, fmt.Sprintf("%x: 42 (2)", dupes[0].Hash))
 	require.Contains(t, out, `"/tmp/a.txt"`)
 	require.Contains(t, out, `"/tmp/b.txt"`)
 }
