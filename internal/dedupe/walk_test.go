@@ -100,6 +100,21 @@ func TestWalkDirsResolvesDirectorySymlinkRoot(t *testing.T) {
 	require.Len(t, files, 1)
 }
 
+func TestWalkDirsDanglingSymlinkRootReturnsError(t *testing.T) {
+	missingTarget := filepath.Join(t.TempDir(), "does-not-exist")
+	link := filepath.Join(t.TempDir(), "dangling")
+	if err := os.Symlink(missingTarget, link); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+
+	// A dangling root symlink must surface as an error, not a silent
+	// zero-file success: filepath.Walk would otherwise Lstat the symlink
+	// itself, see it's non-regular, and skip it without complaint.
+	files, err := WalkDirs([]string{link}, zerolog.Nop())
+	require.Error(t, err)
+	require.Empty(t, files)
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
