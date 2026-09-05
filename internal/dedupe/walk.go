@@ -3,8 +3,8 @@ package dedupe
 import (
 	"errors"
 	"io/fs"
+	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/rs/zerolog"
 )
@@ -64,13 +64,14 @@ func WalkDirs(roots []string, logger zerolog.Logger) ([]FileEntry, error) {
 // distinct subtree even when overlapping or repeated roots are supplied.
 // roots must already be canonical (absolute, symlink-resolved) paths.
 //
-// Containment is checked with filepath.Rel against every other retained root,
-// rather than lexical sorting plus a string-prefix/adjacency check: sorting
-// does not guarantee a root's ancestor ends up adjacent to it (e.g. ".../a",
-// ".../a!", ".../a/sub" sort in that order, separating "a" from its
-// descendant "a/sub"), and a raw prefix check on "root+separator" mishandles
-// a filesystem root like "/" (producing a doubled separator). filepath.Rel is
-// component-aware, so both problems are avoided.
+// Containment is checked against every other retained root (not just the
+// previously kept one) using real filesystem identity rather than string
+// comparison: lexical sorting plus a string-prefix/adjacency check is fooled
+// by sort order (e.g. ".../a", ".../a!", ".../a/sub" sort in that order,
+// separating "a" from its descendant "a/sub") and by paths that are spelled
+// differently but denote the same directory, e.g. on a case-insensitive
+// filesystem -- the default for both macOS/APFS and Windows, not just
+// Windows.
 func dedupeContainedRoots(roots []string) []string {
 	unique := make([]string, 0, len(roots))
 	seen := make(map[string]struct{}, len(roots))
@@ -86,10 +87,21 @@ func dedupeContainedRoots(roots []string) []string {
 	for i, r := range unique {
 		contained := false
 		for j, other := range unique {
-			if i != j && isWithinRoot(r, other) {
-				contained = true
-				break
+			if i == j || !isWithinRoot(r, other) {
+				continue
 			}
+			if isWithinRoot(other, r) {
+				// r and other are within each other, meaning they denote the
+				// same directory on disk despite being spelled differently
+				// (e.g. case variants on a case-insensitive filesystem). Keep
+				// only the first occurrence instead of dropping both.
+				if j < i {
+					contained = true
+				}
+				continue
+			}
+			contained = true
+			break
 		}
 		if !contained {
 			result = append(result, r)
@@ -98,17 +110,28 @@ func dedupeContainedRoots(roots []string) []string {
 	return result
 }
 
-// isWithinRoot reports whether path is root itself or a descendant of it.
-// Both must already be canonical (absolute, symlink-resolved) paths.
+// isWithinRoot reports whether path is root itself or a descendant of it, by
+// walking up path's real ancestor chain and comparing on-disk file identity
+// (device + inode, via os.SameFile) at each step. This is deliberately
+// filesystem-identity based rather than string based, so paths that are
+// spelled differently but denote the same directory -- on a case-insensitive
+// filesystem (macOS/APFS and Windows by default), via a bind mount, or a
+// hard-linked directory -- are still recognized correctly.
 func isWithinRoot(path, root string) bool {
-	rel, err := filepath.Rel(root, path)
+	rootInfo, err := os.Stat(root)
 	if err != nil {
 		return false
 	}
-	if rel == "." {
-		return true
+	for {
+		if info, err := os.Stat(path); err == nil && os.SameFile(info, rootInfo) {
+			return true
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return false
+		}
+		path = parent
 	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // canonicalRoot resolves root to an absolute, symlink-free path so that
