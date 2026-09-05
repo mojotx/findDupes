@@ -72,6 +72,12 @@ func WalkDirs(roots []string, logger zerolog.Logger) ([]FileEntry, error) {
 // differently but denote the same directory, e.g. on a case-insensitive
 // filesystem -- the default for both macOS/APFS and Windows, not just
 // Windows.
+//
+// Filesystem identity lookups (os.Stat) are memoized in identityCache, keyed
+// by path, so the same ancestor is never stat'd more than once even though
+// it may be visited while checking many different (path, root) pairs. Without
+// this, the pairwise checks below would cost O(roots^2 * average-path-depth)
+// syscalls; with it, each unique path encountered is stat'd exactly once.
 func dedupeContainedRoots(roots []string) []string {
 	unique := make([]string, 0, len(roots))
 	seen := make(map[string]struct{}, len(roots))
@@ -83,14 +89,15 @@ func dedupeContainedRoots(roots []string) []string {
 		unique = append(unique, r)
 	}
 
+	cache := make(identityCache, len(unique))
 	result := make([]string, 0, len(unique))
 	for i, r := range unique {
 		contained := false
 		for j, other := range unique {
-			if i == j || !isWithinRoot(r, other) {
+			if i == j || !cache.isWithinRoot(r, other) {
 				continue
 			}
-			if isWithinRoot(other, r) {
+			if cache.isWithinRoot(other, r) {
 				// r and other are within each other, meaning they denote the
 				// same directory on disk despite being spelled differently
 				// (e.g. case variants on a case-insensitive filesystem). Keep
@@ -110,6 +117,26 @@ func dedupeContainedRoots(roots []string) []string {
 	return result
 }
 
+// identityCache memoizes os.Stat results by path so repeated lookups of the
+// same file (e.g. a shared ancestor directory visited while checking
+// containment for many different root pairs) cost a single syscall.
+type identityCache map[string]os.FileInfo
+
+// stat returns the cached os.FileInfo for path, populating the cache on a
+// miss. The second return value is false if path could not be stat'd.
+func (c identityCache) stat(path string) (os.FileInfo, bool) {
+	if info, ok := c[path]; ok {
+		return info, info != nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		c[path] = nil
+		return nil, false
+	}
+	c[path] = info
+	return info, true
+}
+
 // isWithinRoot reports whether path is root itself or a descendant of it, by
 // walking up path's real ancestor chain and comparing on-disk file identity
 // (device + inode, via os.SameFile) at each step. This is deliberately
@@ -117,13 +144,13 @@ func dedupeContainedRoots(roots []string) []string {
 // spelled differently but denote the same directory -- on a case-insensitive
 // filesystem (macOS/APFS and Windows by default), via a bind mount, or a
 // hard-linked directory -- are still recognized correctly.
-func isWithinRoot(path, root string) bool {
-	rootInfo, err := os.Stat(root)
-	if err != nil {
+func (c identityCache) isWithinRoot(path, root string) bool {
+	rootInfo, ok := c.stat(root)
+	if !ok {
 		return false
 	}
 	for {
-		if info, err := os.Stat(path); err == nil && os.SameFile(info, rootInfo) {
+		if info, ok := c.stat(path); ok && os.SameFile(info, rootInfo) {
 			return true
 		}
 		parent := filepath.Dir(path)
