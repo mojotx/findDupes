@@ -63,10 +63,10 @@ func TestWalkDirsDeduplicatesSymlinkedRoots(t *testing.T) {
 	require.NoError(t, os.Mkdir(realDir, 0o755))
 	writeFile(t, filepath.Join(realDir, "a.txt"), "aaa")
 
-	// The symlink is an intermediate path component here, not the root's final
-	// component, to exercise OS-level transparent resolution of intermediate
-	// symlinks (as opposed to WalkDirs' own root-resolution, covered by
-	// TestWalkDirsResolvesDirectorySymlinkRoot below).
+	// The symlink is an intermediate path component here (not the root's final
+	// component), so this covers canonicalRoot resolving roots that differ
+	// only by an intermediate symlink — distinct from the directory-symlink-
+	// as-root case covered by TestWalkDirsResolvesDirectorySymlinkRoot below.
 	outer := t.TempDir()
 	linkedParent := filepath.Join(outer, "linked")
 	if err := os.Symlink(base, linkedParent); err != nil {
