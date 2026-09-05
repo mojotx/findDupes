@@ -31,6 +31,7 @@ Flags:
 
 - `-v`, `--verbose` — print progress while scanning files
 - `-w`, `--workers` — number of concurrent hashing workers (default: number of CPUs)
+- `--version` — print the version number
 
 ## Known CI limitations
 
