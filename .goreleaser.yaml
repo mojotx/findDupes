@@ -1,0 +1,45 @@
+---
+version: 2
+
+project_name: findDupes
+
+before:
+    hooks:
+        - go mod download -x
+        - go mod verify
+        - go mod tidy -v
+
+builds:
+    - main: .
+      binary: findDupes
+      ldflags:
+          - -X github.com/mojotx/findDupes/internal/version.findDupesVersion={{ .Tag }}-0-g{{ .ShortCommit }}
+      goos:
+          - linux
+          - windows
+          - darwin
+      goarch:
+          - "386"
+          - amd64
+          - arm
+          - arm64
+      ignore:
+          - goos: darwin
+            goarch: "386"
+          - goos: darwin
+            goarch: arm
+
+archives:
+    - format_overrides:
+          - goos: windows
+            formats: ["zip"]
+      name_template: >-
+          {{ .ProjectName }}_
+          {{- .Version }}_
+          {{- .Os }}_
+          {{- .Arch }}
+
+release:
+    github:
+        owner: mojotx
+        name: findDupes
