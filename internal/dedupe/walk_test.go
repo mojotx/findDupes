@@ -215,12 +215,21 @@ func writeFile(t *testing.T, path, content string) {
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 }
 
-// skipIfRoot skips permission-based tests when running as root (e.g. in some
-// CI containers), since root bypasses file mode permission checks entirely.
-func skipIfRoot(t *testing.T) {
+// skipIfPermissionsNotEnforced skips permission-based tests when the current
+// user or filesystem bypasses file mode permission checks.
+func skipIfPermissionsNotEnforced(t *testing.T) {
 	t.Helper()
-	if os.Geteuid() == 0 {
-		t.Skip("permission checks do not apply when running as root")
+	dir := t.TempDir()
+	probe := filepath.Join(dir, "probe")
+	writeFile(t, probe, "probe")
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Skipf("permission checks are not supported: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	file, err := os.Open(probe)
+	if err == nil {
+		_ = file.Close()
+		t.Skip("permission checks are not enforced")
 	}
 }
 
@@ -228,7 +237,7 @@ func skipIfRoot(t *testing.T) {
 // error branch (path != root): the root itself walks fine, but an
 // unreadable subdirectory triggers a logged, non-fatal error.
 func TestWalkDirsSkipsUnreadableSubdirectory(t *testing.T) {
-	skipIfRoot(t)
+	skipIfPermissionsNotEnforced(t)
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "a.txt"), "aaa")
 	locked := filepath.Join(dir, "locked")
@@ -246,7 +255,7 @@ func TestWalkDirsSkipsUnreadableSubdirectory(t *testing.T) {
 // branch: an unreadable root directory fails during filepath.Walk itself
 // (as opposed to failing earlier during canonicalization).
 func TestWalkDirsUnreadableRootReturnsError(t *testing.T) {
-	skipIfRoot(t)
+	skipIfPermissionsNotEnforced(t)
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "a.txt"), "aaa")
 	require.NoError(t, os.Chmod(dir, 0o000))

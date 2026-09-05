@@ -110,6 +110,8 @@ func TestFindSortsMultipleDuplicateGroupsByHash(t *testing.T) {
 	dupes, _, err := Find([]string{dir}, 2, zerolog.Nop())
 	require.NoError(t, err)
 	require.Len(t, dupes, 2)
-	require.Negative(t, bytes.Compare(dupes[0].Hash[:], dupes[1].Hash[:]))
+	for groupIndex := 1; groupIndex < len(dupes); groupIndex++ {
+		require.Less(t, bytes.Compare(dupes[groupIndex-1].Hash[:], dupes[groupIndex].Hash[:]), 0)
+	}
 	require.Len(t, dupes[0].Paths, 2)
 }
