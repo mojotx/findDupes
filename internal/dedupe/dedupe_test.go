@@ -1,12 +1,36 @@
 package dedupe
 
 import (
+	"bytes"
 	"path/filepath"
 	"testing"
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 )
+
+func TestHashAllClampsNonPositiveWorkers(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.txt"), "aaa")
+	candidates := []FileEntry{{Path: filepath.Join(dir, "a.txt"), Size: 3}}
+
+	var results []Result
+	for r := range hashAll(candidates, 0, zerolog.Nop()) {
+		results = append(results, r)
+	}
+	require.Len(t, results, 1)
+}
+
+func TestHashAllSkipsUnhashableFile(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.txt")
+	candidates := []FileEntry{{Path: missing, Size: 3}}
+
+	var results []Result
+	for r := range hashAll(candidates, 2, zerolog.Nop()) {
+		results = append(results, r)
+	}
+	require.Empty(t, results)
+}
 
 func TestFilterBySize(t *testing.T) {
 	files := []FileEntry{
@@ -71,5 +95,23 @@ func TestFindPartialRootFailureStillReturnsResults(t *testing.T) {
 	dupes, _, err := Find([]string{dir, missing}, 2, zerolog.Nop())
 	require.Error(t, err)
 	require.Len(t, dupes, 1)
+}
+
+// TestFindSortsMultipleDuplicateGroupsByHash exercises the sort.Slice
+// comparator in Find, which is only invoked when there are at least two
+// duplicate sets to compare.
+func TestFindSortsMultipleDuplicateGroupsByHash(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a1.txt"), "group a")
+	writeFile(t, filepath.Join(dir, "a2.txt"), "group a")
+	writeFile(t, filepath.Join(dir, "b1.txt"), "group b")
+	writeFile(t, filepath.Join(dir, "b2.txt"), "group b")
+
+	dupes, _, err := Find([]string{dir}, 2, zerolog.Nop())
+	require.NoError(t, err)
+	require.Len(t, dupes, 2)
+	for groupIndex := 1; groupIndex < len(dupes); groupIndex++ {
+		require.Less(t, bytes.Compare(dupes[groupIndex-1].Hash[:], dupes[groupIndex].Hash[:]), 0)
+	}
 	require.Len(t, dupes[0].Paths, 2)
 }

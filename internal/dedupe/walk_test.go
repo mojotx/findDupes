@@ -214,3 +214,67 @@ func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 }
+
+// skipIfPermissionsNotEnforced skips permission-based tests when the current
+// user or filesystem bypasses file mode permission checks.
+func skipIfPermissionsNotEnforced(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	probe := filepath.Join(dir, "probe")
+	writeFile(t, probe, "probe")
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Skipf("permission checks are not supported: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	file, err := os.Open(probe)
+	if err == nil {
+		_ = file.Close()
+		t.Skip("permission checks are not enforced")
+	}
+}
+
+// TestWalkDirsSkipsUnreadableSubdirectory exercises the walker's per-file
+// error branch (path != root): the root itself walks fine, but an
+// unreadable subdirectory triggers a logged, non-fatal error.
+func TestWalkDirsSkipsUnreadableSubdirectory(t *testing.T) {
+	skipIfPermissionsNotEnforced(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.txt"), "aaa")
+	locked := filepath.Join(dir, "locked")
+	require.NoError(t, os.Mkdir(locked, 0o755))
+	writeFile(t, filepath.Join(locked, "b.txt"), "bbb")
+	require.NoError(t, os.Chmod(locked, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	files, err := WalkDirs([]string{dir}, zerolog.Nop())
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+}
+
+// TestWalkDirsUnreadableRootReturnsError exercises the walker's root-error
+// branch: an unreadable root directory fails during filepath.Walk itself
+// (as opposed to failing earlier during canonicalization).
+func TestWalkDirsUnreadableRootReturnsError(t *testing.T) {
+	skipIfPermissionsNotEnforced(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.txt"), "aaa")
+	require.NoError(t, os.Chmod(dir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	files, err := WalkDirs([]string{dir}, zerolog.Nop())
+	require.Error(t, err)
+	require.Empty(t, files)
+}
+
+func TestIdentityCacheStatMissingPath(t *testing.T) {
+	cache := make(identityCache)
+	info, ok := cache.stat(filepath.Join(t.TempDir(), "does-not-exist"))
+	require.False(t, ok)
+	require.Nil(t, info)
+}
+
+func TestIsWithinRootMissingRoot(t *testing.T) {
+	cache := make(identityCache)
+	within := cache.isWithinRoot(t.TempDir(), filepath.Join(t.TempDir(), "does-not-exist"))
+	require.False(t, within)
+}

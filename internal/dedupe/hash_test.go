@@ -30,3 +30,10 @@ func TestHashFileMissing(t *testing.T) {
 	_, err := HashFile(filepath.Join(t.TempDir(), "missing.txt"))
 	require.Error(t, err)
 }
+
+// TestHashFileDirectory exercises the io.Copy error branch: reading a
+// directory's contents as a file fails on both Linux and macOS.
+func TestHashFileDirectory(t *testing.T) {
+	_, err := HashFile(t.TempDir())
+	require.Error(t, err)
+}
