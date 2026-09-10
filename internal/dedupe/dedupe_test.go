@@ -3,8 +3,10 @@ package dedupe
 import (
 	"bytes"
 	"context"
+	"io"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
@@ -31,6 +33,36 @@ func TestHashAllSkipsUnhashableFile(t *testing.T) {
 		results = append(results, r)
 	}
 	require.Empty(t, results)
+}
+
+func TestHashAllStopsWhenCanceledDuringHash(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan struct{})
+	hashFile := func(context.Context, string) (HashType, error) {
+		close(started)
+		cancel()
+		return HashType{}, nil
+	}
+
+	results := hashAllWith(ctx, []FileEntry{{Path: "file", Size: 1}}, 1, zerolog.Nop(), hashFile)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("hash worker did not start")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		for range results {
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("hash workers did not stop after cancellation")
+	}
 }
 
 func TestFilterBySize(t *testing.T) {
@@ -68,6 +100,23 @@ func TestFindCanceledContext(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.Empty(t, dupes)
 	require.Equal(t, Stats{}, stats)
+}
+
+func TestFindStopsWhenCanceledDuringHash(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.txt"), "same content")
+	writeFile(t, filepath.Join(dir, "b.txt"), "same content")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	logger := zerolog.New(io.Discard).Level(zerolog.DebugLevel).Hook(zerolog.HookFunc(func(_ *zerolog.Event, _ zerolog.Level, message string) {
+		if message == "scanning file" {
+			cancel()
+		}
+	}))
+
+	dupes, _, err := Find(ctx, []string{dir}, 1, logger)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, dupes)
 }
 
 func TestFindNoDuplicates(t *testing.T) {

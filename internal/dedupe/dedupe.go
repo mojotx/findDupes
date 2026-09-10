@@ -43,6 +43,9 @@ func Find(ctx context.Context, roots []string, workers int, logger zerolog.Logge
 		return nil, Stats{}, err
 	}
 	files, walkErr := WalkDirs(ctx, roots, logger)
+	if err := ctx.Err(); err != nil {
+		return nil, Stats{}, err
+	}
 	if walkErr != nil {
 		logger.Error().Err(walkErr).Msg("one or more roots could not be fully scanned")
 	}

@@ -1,6 +1,7 @@
 package dedupe
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -45,6 +46,21 @@ func TestHashFileCanceledContext(t *testing.T) {
 
 	_, err := HashFile(ctx, filepath.Join(t.TempDir(), "missing.txt"))
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestContextReaderStopsAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	reader := contextReader{ctx: ctx, reader: bytes.NewReader([]byte("content"))}
+	buffer := make([]byte, 1)
+
+	count, err := reader.Read(buffer)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+
+	cancel()
+	count, err = reader.Read(buffer)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, count)
 }
 
 func TestHashPrefixOnlyReadsPrefix(t *testing.T) {
