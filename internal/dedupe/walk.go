@@ -74,9 +74,16 @@ func WalkDirs(ctx context.Context, roots []string, logger zerolog.Logger) ([]Fil
 		errs = append(errs, dedupeErr)
 	}
 	for _, r := range deduped {
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
+			break
+		}
 		root = r
 		if err := filepath.WalkDir(root, walker); err != nil {
 			errs = append(errs, err)
+		}
+		if err := ctx.Err(); err != nil {
+			break
 		}
 	}
 	return files, errors.Join(errs...)
