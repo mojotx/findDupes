@@ -9,8 +9,18 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+const hashPrefixSize = 4 << 10
+
 // HashFile computes the SHA-256 hash of the file at path.
 func HashFile(ctx context.Context, path string) (HashType, error) {
+	return hashFile(ctx, path, 0)
+}
+
+func hashPrefix(ctx context.Context, path string) (HashType, error) {
+	return hashFile(ctx, path, hashPrefixSize)
+}
+
+func hashFile(ctx context.Context, path string, limit int64) (HashType, error) {
 	if err := ctx.Err(); err != nil {
 		return HashType{}, err
 	}
@@ -26,7 +36,11 @@ func HashFile(ctx context.Context, path string) (HashType, error) {
 	}()
 
 	h := sha256.New()
-	if _, err := io.Copy(h, contextReader{ctx: ctx, reader: f}); err != nil {
+	reader := io.Reader(contextReader{ctx: ctx, reader: f})
+	if limit > 0 {
+		reader = io.LimitReader(reader, limit)
+	}
+	if _, err := io.Copy(h, reader); err != nil {
 		return hash, err
 	}
 	copy(hash[:], h.Sum(nil))

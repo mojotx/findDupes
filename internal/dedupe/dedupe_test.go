@@ -78,6 +78,25 @@ func TestFindNoDuplicates(t *testing.T) {
 	require.Empty(t, dupes)
 }
 
+func TestFindProgressiveHashConfirmsFullContent(t *testing.T) {
+	dir := t.TempDir()
+	prefix := bytes.Repeat([]byte("p"), hashPrefixSize)
+	writeFile(t, filepath.Join(dir, "different-a.txt"), string(append(append([]byte{}, prefix...), bytes.Repeat([]byte("a"), 32)...)))
+	writeFile(t, filepath.Join(dir, "different-b.txt"), string(append(append([]byte{}, prefix...), bytes.Repeat([]byte("b"), 32)...)))
+	writeFile(t, filepath.Join(dir, "same-a.txt"), string(append(append([]byte{}, prefix...), bytes.Repeat([]byte("c"), 32)...)))
+	writeFile(t, filepath.Join(dir, "same-b.txt"), string(append(append([]byte{}, prefix...), bytes.Repeat([]byte("c"), 32)...)))
+
+	dupes, _, err := Find(context.Background(), []string{dir}, 2, zerolog.Nop())
+	require.NoError(t, err)
+	require.Len(t, dupes, 1)
+	canonicalDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{
+		filepath.Join(canonicalDir, "same-a.txt"),
+		filepath.Join(canonicalDir, "same-b.txt"),
+	}, dupes[0].Paths)
+}
+
 func TestFindClampsNonPositiveWorkers(t *testing.T) {
 	for _, workers := range []int{0, -1} {
 		dir := t.TempDir()

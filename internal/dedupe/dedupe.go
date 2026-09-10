@@ -65,7 +65,7 @@ func Find(ctx context.Context, roots []string, workers int, logger zerolog.Logge
 
 	hashMap := make(map[HashType][]string)
 	sizeMap := make(map[HashType]int64)
-	for r := range hashAll(ctx, candidates, workers, logger) {
+	for r := range progressiveHashAll(ctx, candidates, workers, logger) {
 		hashMap[r.Hash] = append(hashMap[r.Hash], r.Path)
 		if _, found := sizeMap[r.Hash]; !found {
 			sizeMap[r.Hash] = r.Size
@@ -93,6 +93,35 @@ func Find(ctx context.Context, roots []string, workers int, logger zerolog.Logge
 // streaming results back to the caller instead of buffering them all in memory.
 // Cancellation stops workers and closes the result channel.
 func hashAll(ctx context.Context, candidates []FileEntry, workers int, logger zerolog.Logger) <-chan Result {
+	return hashAllWith(ctx, candidates, workers, logger, HashFile)
+}
+
+func progressiveHashAll(ctx context.Context, candidates []FileEntry, workers int, logger zerolog.Logger) <-chan Result {
+	results := make(chan Result, workers)
+	go func() {
+		defer close(results)
+		groups := make(map[HashType][]FileEntry)
+		for result := range hashAllWith(ctx, candidates, workers, logger, hashPrefix) {
+			groups[result.Hash] = append(groups[result.Hash], FileEntry{Path: result.Path, Size: result.Size})
+		}
+		var collisions []FileEntry
+		for _, group := range groups {
+			if len(group) > 1 {
+				collisions = append(collisions, group...)
+			}
+		}
+		for result := range hashAll(ctx, collisions, workers, logger) {
+			select {
+			case results <- result:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return results
+}
+
+func hashAllWith(ctx context.Context, candidates []FileEntry, workers int, logger zerolog.Logger, hashFile func(context.Context, string) (HashType, error)) <-chan Result {
 	if workers < 1 {
 		workers = 1
 	}
@@ -116,7 +145,7 @@ func hashAll(ctx context.Context, candidates []FileEntry, workers int, logger ze
 					}
 				}
 				logger.Debug().Str("path", fe.Path).Int64("size", fe.Size).Msg("scanning file")
-				hash, err := HashFile(ctx, fe.Path)
+				hash, err := hashFile(ctx, fe.Path)
 				if err != nil {
 					logger.Error().Err(err).Str("path", fe.Path).Msg("error hashing file")
 					continue

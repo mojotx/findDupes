@@ -46,3 +46,22 @@ func TestHashFileCanceledContext(t *testing.T) {
 	_, err := HashFile(ctx, filepath.Join(t.TempDir(), "missing.txt"))
 	require.ErrorIs(t, err, context.Canceled)
 }
+
+func TestHashPrefixOnlyReadsPrefix(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "large.txt")
+	require.NoError(t, os.WriteFile(path, append([]byte("prefix"), make([]byte, hashPrefixSize)...), 0o600))
+
+	prefix, err := hashPrefix(context.Background(), path)
+	require.NoError(t, err)
+	want, err := hashFile(context.Background(), path, hashPrefixSize)
+	require.NoError(t, err)
+	require.Equal(t, want, prefix)
+	require.NotEqual(t, prefix, mustHash(t, path))
+}
+
+func mustHash(t *testing.T, path string) HashType {
+	t.Helper()
+	hash, err := HashFile(context.Background(), path)
+	require.NoError(t, err)
+	return hash
+}
