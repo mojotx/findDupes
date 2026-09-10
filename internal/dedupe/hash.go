@@ -46,6 +46,9 @@ func hashFile(ctx context.Context, path string, limit int64) (HashType, error) {
 		reader = io.LimitReader(reader, limit)
 	}
 	if _, err := io.Copy(h, reader); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return hash, ctxErr
+		}
 		return hash, err
 	}
 	copy(hash[:], h.Sum(nil))
