@@ -141,7 +141,7 @@ func TestWalkDirs(t *testing.T) {
 			wantFiles: 1,
 		},
 		{
-			// filepath.Walk lstats (never dereferences) the root it's given,
+			// filepath.WalkDir lstats (never dereferences) the root it's given,
 			// so a dangling root symlink must surface as an error rather
 			// than a silent zero-file success.
 			name: "dangling symlink root returns an error",
@@ -252,7 +252,7 @@ func TestWalkDirsSkipsUnreadableSubdirectory(t *testing.T) {
 }
 
 // TestWalkDirsUnreadableRootReturnsError exercises the walker's root-error
-// branch: an unreadable root directory fails during filepath.Walk itself
+// branch: an unreadable root directory fails during filepath.WalkDir itself
 // (as opposed to failing earlier during canonicalization).
 func TestWalkDirsUnreadableRootReturnsError(t *testing.T) {
 	skipIfPermissionsNotEnforced(t)
