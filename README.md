@@ -9,7 +9,8 @@ searching one or more directories concurrently.
 
 ## How it works
 
-`findDupes` uses a two-stage process (with a size-based filter between stages) to avoid reading every file unnecessarily:
+`findDupes` filters candidates before hashing and uses progressive hashing to
+avoid reading every file unnecessarily:
 
 1. It recursively walks the supplied roots and collects the path and size of
    each regular file. Reading file metadata is much faster than reading file
@@ -17,12 +18,14 @@ searching one or more directories concurrently.
 2. Files whose size is unique among all discovered files are discarded because
 	 they cannot have an identical copy. Files sharing a size become candidates
 	 for content comparison.
-3. The candidates are read concurrently by a worker pool and each file is
-	 hashed with SHA-256. Files with the same hash are reported as duplicates.
+3. A worker pool hashes the first 4 KiB of each candidate. Only files sharing
+	 that prefix hash are read again and hashed in full with SHA-256.
+4. Files with the same full hash are reported as duplicates. Hard-linked paths
+	 to the same underlying file are collected only once.
 
-The size check is only a filter: files must still have matching content hashes
-to be considered duplicates. Conversely, files with different sizes are never
-read or hashed against one another.
+The size and prefix checks are only filters: files must still have matching
+full content hashes to be considered duplicates. Conversely, files with
+different sizes or prefix hashes are never fully hashed against one another.
 
 ### Roots and scanning behavior
 
@@ -32,13 +35,16 @@ read or hashed against one another.
 - Repeated roots and overlapping roots, such as `dir dir` or `dir dir/sub`,
 	are deduplicated before walking. The same applies when roots use different
 	spellings, such as relative and absolute paths, or resolve through the same
-	symlink. Each file is therefore considered only once.
+	 symlink. Filesystem identities are tracked with constant-time lookups, so
+	 each file is considered only once without comparing it to every prior file.
 - Only regular files are collected. Symlinks encountered within a scanned
 	directory are not followed.
 - Multiple paths to the same hard-linked file are collected once.
 - A file that cannot be read during hashing is logged and skipped. If a root
 	cannot be resolved or walked, files successfully found under other roots are
 	still processed, but the command returns an error after printing any results.
+- `Ctrl-C` and `SIGTERM` cancel an active scan. Work stops between filesystem
+	 reads and the command returns the cancellation error.
 
 Duplicate groups are printed with their SHA-256 hash, file size, and paths. The
 paths within each group, and the groups themselves, are sorted for repeatable
@@ -83,6 +89,14 @@ JSON output has one object per duplicate group with `hash`, `size`, and
 content-hash candidates, duplicate groups, and duplicate files. Statistics
 are written to stderr so JSON output remains safe to pipe into tools such as
 `jq`.
+
+For example, to inspect duplicate groups with `jq` while keeping statistics
+on the terminal:
+
+```sh
+findDupes --json --stats ~/Downloads > duplicates.ndjson
+jq 'select(.size > 1048576)' duplicates.ndjson
+```
 
 ## Known CI limitations
 
