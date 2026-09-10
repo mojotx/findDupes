@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -187,6 +188,17 @@ func TestWalkDirs(t *testing.T) {
 	}
 }
 
+func TestWalkDirsCanceledDuringWalk(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.txt"), "aaa")
+	writeFile(t, filepath.Join(dir, "b.txt"), "bbb")
+	ctx := cancelAfterErrChecks(context.Background(), 7)
+
+	files, err := WalkDirs(ctx, []string{dir}, zerolog.Nop())
+	require.ErrorIs(t, err, context.Canceled)
+	require.Less(t, len(files), 2)
+}
+
 func TestDedupeContainedRootsKeepsOneOfCaseInsensitiveDuplicateRoots(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "Data"), 0o755))
@@ -295,4 +307,28 @@ func TestIsWithinRootMissingRoot(t *testing.T) {
 	within, err := cache.isWithinRoot(context.Background(), t.TempDir(), filepath.Join(t.TempDir(), "does-not-exist"))
 	require.NoError(t, err)
 	require.False(t, within)
+}
+
+type cancelAfterErrContext struct {
+	context.Context
+	remaining int
+	done      chan struct{}
+	once      sync.Once
+}
+
+func cancelAfterErrChecks(parent context.Context, checks int) context.Context {
+	return &cancelAfterErrContext{Context: parent, remaining: checks, done: make(chan struct{})}
+}
+
+func (c *cancelAfterErrContext) Err() error {
+	if c.remaining > 0 {
+		c.remaining--
+		return nil
+	}
+	c.once.Do(func() { close(c.done) })
+	return context.Canceled
+}
+
+func (c *cancelAfterErrContext) Done() <-chan struct{} {
+	return c.done
 }
