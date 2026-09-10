@@ -105,9 +105,10 @@ func progressiveHashAll(ctx context.Context, candidates []FileEntry, workers int
 	results := make(chan Result, workers)
 	go func() {
 		defer close(results)
-		groups := make(map[HashType][]FileEntry)
+		groups := make(map[prefixKey][]FileEntry)
 		for result := range hashAllWith(ctx, candidates, workers, logger, hashPrefix) {
-			groups[result.Hash] = append(groups[result.Hash], FileEntry{Path: result.Path, Size: result.Size})
+			key := prefixKey{hash: result.Hash, size: result.Size}
+			groups[key] = append(groups[key], FileEntry{Path: result.Path, Size: result.Size})
 		}
 		var collisions []FileEntry
 		for _, group := range groups {
@@ -124,6 +125,11 @@ func progressiveHashAll(ctx context.Context, candidates []FileEntry, workers int
 		}
 	}()
 	return results
+}
+
+type prefixKey struct {
+	hash HashType
+	size int64
 }
 
 func hashAllWith(ctx context.Context, candidates []FileEntry, workers int, logger zerolog.Logger, hashFile func(context.Context, string) (HashType, error)) <-chan Result {

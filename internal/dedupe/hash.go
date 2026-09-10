@@ -3,6 +3,7 @@ package dedupe
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"io"
 	"os"
 
@@ -29,8 +30,12 @@ func hashFile(ctx context.Context, path string, limit int64) (HashType, error) {
 	if err != nil {
 		return hash, err
 	}
+	stop := context.AfterFunc(ctx, func() {
+		_ = f.Close()
+	})
 	defer func() {
-		if err := f.Close(); err != nil {
+		stop()
+		if err := f.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
 			log.Error().Err(err).Msgf("failed to close file %s", path)
 		}
 	}()

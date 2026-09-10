@@ -57,7 +57,11 @@ func WalkDirs(ctx context.Context, roots []string, logger zerolog.Logger) ([]Fil
 	var errs []error
 	canonical := make([]string, 0, len(roots))
 	for _, r := range roots {
-		c, err := canonicalRoot(r)
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
+			break
+		}
+		c, err := canonicalRoot(ctx, r)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -65,11 +69,11 @@ func WalkDirs(ctx context.Context, roots []string, logger zerolog.Logger) ([]Fil
 		canonical = append(canonical, c)
 	}
 
-	for _, r := range dedupeContainedRoots(canonical) {
-		if err := ctx.Err(); err != nil {
-			errs = append(errs, err)
-			break
-		}
+	deduped, dedupeErr := dedupeContainedRoots(ctx, canonical)
+	if dedupeErr != nil {
+		errs = append(errs, dedupeErr)
+	}
+	for _, r := range deduped {
 		root = r
 		if err := filepath.WalkDir(root, walker); err != nil {
 			errs = append(errs, err)
@@ -80,10 +84,13 @@ func WalkDirs(ctx context.Context, roots []string, logger zerolog.Logger) ([]Fil
 
 // dedupeContainedRoots removes duplicate and nested roots. Roots must already
 // be absolute and symlink-resolved; containment uses filesystem identity.
-func dedupeContainedRoots(roots []string) []string {
+func dedupeContainedRoots(ctx context.Context, roots []string) ([]string, error) {
 	unique := make([]string, 0, len(roots))
 	seen := make(map[string]struct{}, len(roots))
 	for _, r := range roots {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if _, ok := seen[r]; ok {
 			continue
 		}
@@ -94,12 +101,29 @@ func dedupeContainedRoots(roots []string) []string {
 	cache := make(identityCache, len(unique))
 	result := make([]string, 0, len(unique))
 	for i, r := range unique {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		contained := false
 		for j, other := range unique {
-			if i == j || !cache.isWithinRoot(r, other) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if i == j {
 				continue
 			}
-			if cache.isWithinRoot(other, r) {
+			within, err := cache.isWithinRoot(ctx, r, other)
+			if err != nil {
+				return nil, err
+			}
+			if !within {
+				continue
+			}
+			within, err = cache.isWithinRoot(ctx, other, r)
+			if err != nil {
+				return nil, err
+			}
+			if within {
 				// r and other are within each other, meaning they denote the
 				// same directory on disk despite being spelled differently
 				// (e.g. case variants on a case-insensitive filesystem). Keep
@@ -116,7 +140,7 @@ func dedupeContainedRoots(roots []string) []string {
 			result = append(result, r)
 		}
 	}
-	return result
+	return result, nil
 }
 
 // identityCache caches filesystem identity lookups by path.
@@ -138,18 +162,21 @@ func (c identityCache) stat(path string) (os.FileInfo, bool) {
 
 // isWithinRoot reports whether path is root or one of its descendants, using
 // filesystem identity rather than path strings.
-func (c identityCache) isWithinRoot(path, root string) bool {
+func (c identityCache) isWithinRoot(ctx context.Context, path, root string) (bool, error) {
 	rootInfo, ok := c.stat(root)
 	if !ok {
-		return false
+		return false, nil
 	}
 	for {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		if info, ok := c.stat(path); ok && os.SameFile(info, rootInfo) {
-			return true
+			return true, nil
 		}
 		parent := filepath.Dir(path)
 		if parent == path {
-			return false
+			return false, nil
 		}
 		path = parent
 	}
@@ -157,7 +184,10 @@ func (c identityCache) isWithinRoot(path, root string) bool {
 
 // canonicalRoot returns an absolute, symlink-free root. Resolution failures
 // are returned so missing and dangling roots do not appear empty.
-func canonicalRoot(root string) (string, error) {
+func canonicalRoot(ctx context.Context, root string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return "", err

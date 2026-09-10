@@ -204,7 +204,8 @@ func TestDedupeContainedRootsKeepsOneOfCaseInsensitiveDuplicateRoots(t *testing.
 		t.Skip("filesystem is case-sensitive")
 	}
 
-	got := dedupeContainedRoots([]string{upper, lower})
+	got, err := dedupeContainedRoots(context.Background(), []string{upper, lower})
+	require.NoError(t, err)
 	require.Len(t, got, 1)
 }
 
@@ -221,7 +222,8 @@ func TestDedupeContainedRootsHandlesLexicallyInterleavedSibling(t *testing.T) {
 	// against the previously kept root" check would let "sub" slip through
 	// as a redundant, separately-walked root instead of being recognized as
 	// already covered by "a".
-	got := dedupeContainedRoots([]string{a, aBang, sub})
+	got, err := dedupeContainedRoots(context.Background(), []string{a, aBang, sub})
+	require.NoError(t, err)
 	require.ElementsMatch(t, []string{a, aBang}, got)
 }
 
@@ -290,6 +292,7 @@ func TestIdentityCacheStatMissingPath(t *testing.T) {
 
 func TestIsWithinRootMissingRoot(t *testing.T) {
 	cache := make(identityCache)
-	within := cache.isWithinRoot(t.TempDir(), filepath.Join(t.TempDir(), "does-not-exist"))
+	within, err := cache.isWithinRoot(context.Background(), t.TempDir(), filepath.Join(t.TempDir(), "does-not-exist"))
+	require.NoError(t, err)
 	require.False(t, within)
 }
