@@ -15,6 +15,7 @@ import (
 func WalkDirs(ctx context.Context, roots []string, logger zerolog.Logger) ([]FileEntry, error) {
 	var files []FileEntry
 	seen := make(map[string]struct{})
+	var seenFiles []os.FileInfo
 	var root string
 	walker := func(path string, entry fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -41,7 +42,14 @@ func WalkDirs(ctx context.Context, roots []string, logger zerolog.Logger) ([]Fil
 		if _, ok := seen[path]; ok {
 			return nil
 		}
+		for _, seenInfo := range seenFiles {
+			if os.SameFile(seenInfo, info) {
+				seen[path] = struct{}{}
+				return nil
+			}
+		}
 		seen[path] = struct{}{}
+		seenFiles = append(seenFiles, info)
 		files = append(files, FileEntry{Path: path, Size: info.Size()})
 		return nil
 	}

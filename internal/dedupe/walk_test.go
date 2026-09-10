@@ -142,6 +142,20 @@ func TestWalkDirs(t *testing.T) {
 			wantFiles: 1,
 		},
 		{
+			name: "hard-linked files are collected once",
+			setup: func(t *testing.T) []string {
+				dir := t.TempDir()
+				original := filepath.Join(dir, "original.txt")
+				link := filepath.Join(dir, "link.txt")
+				writeFile(t, original, "same content")
+				if err := os.Link(original, link); err != nil {
+					t.Skipf("hard links not supported: %v", err)
+				}
+				return []string{dir}
+			},
+			wantFiles: 1,
+		},
+		{
 			// filepath.WalkDir lstats (never dereferences) the root it's given,
 			// so a dangling root symlink must surface as an error rather
 			// than a silent zero-file success.

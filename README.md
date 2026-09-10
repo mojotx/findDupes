@@ -35,6 +35,7 @@ read or hashed against one another.
 	symlink. Each file is therefore considered only once.
 - Only regular files are collected. Symlinks encountered within a scanned
 	directory are not followed.
+- Multiple paths to the same hard-linked file are collected once.
 - A file that cannot be read during hashing is logged and skipped. If a root
 	cannot be resolved or walked, files successfully found under other roots are
 	still processed, but the command returns an error after printing any results.
