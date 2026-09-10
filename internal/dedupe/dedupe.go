@@ -77,6 +77,8 @@ func Find(ctx context.Context, roots []string, workers int, logger zerolog.Logge
 		if len(paths) > 1 {
 			sort.Strings(paths)
 			dupes = append(dupes, DuplicateSet{Hash: hash, Size: sizeMap[hash], Paths: paths})
+			stats.DuplicateGroups++
+			stats.DuplicateFiles += len(paths)
 		}
 	}
 	sort.Slice(dupes, func(i, j int) bool {

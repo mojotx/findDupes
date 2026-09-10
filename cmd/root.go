@@ -3,7 +3,9 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"time"
@@ -18,8 +20,10 @@ import (
 )
 
 var (
-	verbose bool
-	workers int
+	verbose  bool
+	workers  int
+	jsonOut  bool
+	statsOut bool
 )
 
 var rootCmd = &cobra.Command{
@@ -34,6 +38,8 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print progress while scanning files")
 	rootCmd.Flags().IntVarP(&workers, "workers", "w", runtime.NumCPU(), "number of concurrent hashing workers")
+	rootCmd.Flags().BoolVar(&jsonOut, "json", false, "print duplicate groups as newline-delimited JSON")
+	rootCmd.Flags().BoolVar(&statsOut, "stats", false, "print scan statistics to stderr")
 }
 
 // Execute runs the root command.
@@ -60,11 +66,43 @@ func runFind(cmd *cobra.Command, args []string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	dupes, _, err := dedupe.Find(ctx, args, workers, logger)
-	printDuplicates(dupes)
+	dupes, stats, err := dedupe.Find(ctx, args, workers, logger)
+	if jsonOut {
+		err = printDuplicatesJSON(os.Stdout, dupes, err)
+	} else {
+		printDuplicates(dupes)
+	}
+	if statsOut {
+		printStats(os.Stderr, stats)
+	}
 
 	logger.Info().Msgf("Elapsed time: %s", time.Since(startTime))
 	return err
+}
+
+type duplicateJSON struct {
+	Hash  string   `json:"hash"`
+	Size  int64    `json:"size"`
+	Paths []string `json:"paths"`
+}
+
+func printDuplicatesJSON(w io.Writer, dupes []dedupe.DuplicateSet, scanErr error) error {
+	encoder := json.NewEncoder(w)
+	for _, d := range dupes {
+		if err := encoder.Encode(duplicateJSON{
+			Hash:  fmt.Sprintf("%x", d.Hash),
+			Size:  d.Size,
+			Paths: d.Paths,
+		}); err != nil {
+			return err
+		}
+	}
+	return scanErr
+}
+
+func printStats(w io.Writer, stats dedupe.Stats) {
+	_, _ = fmt.Fprintf(w, "files=%d skipped=%d candidates=%d duplicate_groups=%d duplicate_files=%d\n",
+		stats.TotalFiles, stats.Skipped, stats.Candidates, stats.DuplicateGroups, stats.DuplicateFiles)
 }
 
 func printDuplicates(dupes []dedupe.DuplicateSet) {

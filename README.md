@@ -73,7 +73,15 @@ Flags:
 
 - `-v`, `--verbose` — print progress while scanning files
 - `-w`, `--workers` — number of concurrent hashing workers (default: number of CPUs)
+- `--json` — print duplicate groups as newline-delimited JSON
+- `--stats` — print scan statistics to stderr
 - `--version` — print the version number
+
+JSON output has one object per duplicate group with `hash`, `size`, and
+`paths` fields. Statistics include discovered files, size-filtered files,
+content-hash candidates, duplicate groups, and duplicate files. Statistics
+are written to stderr so JSON output remains safe to pipe into tools such as
+`jq`.
 
 ## Known CI limitations
 

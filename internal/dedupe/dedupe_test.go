@@ -54,6 +54,8 @@ func TestFind(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 3, stats.TotalFiles)
 	require.Equal(t, 1, stats.Skipped)
+	require.Equal(t, 1, stats.DuplicateGroups)
+	require.Equal(t, 2, stats.DuplicateFiles)
 	require.Len(t, dupes, 1)
 	require.Len(t, dupes[0].Paths, 2)
 }
