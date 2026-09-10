@@ -1,6 +1,7 @@
 package dedupe
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -9,22 +10,29 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// WalkDirs collects all regular files under roots. Per-file walk errors are
-// logged and skipped; a failing root (including one that cannot be resolved,
-// such as a dangling symlink) is collected and returned as a joined error.
-// Overlapping or repeated roots (e.g. "dir dir" or "dir dir/sub"), and roots
-// that are themselves directory symlinks or symlinked via an intermediate
-// component, are resolved to a canonical path and deduplicated before any
-// walk starts, so each distinct subtree is only ever walked once.
-func WalkDirs(roots []string, logger zerolog.Logger) ([]FileEntry, error) {
+// WalkDirs collects regular files under roots. Per-file errors are logged and
+// skipped; root errors are returned. Overlapping roots are walked once.
+func WalkDirs(ctx context.Context, roots []string, logger zerolog.Logger) ([]FileEntry, error) {
 	var files []FileEntry
 	seen := make(map[string]struct{})
+	seenIdentities := make(map[fileIdentity]struct{})
 	var root string
-	walker := func(path string, info fs.FileInfo, err error) error {
+	walker := func(path string, entry fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			if path == root {
 				return err
 			}
+			logger.Error().Err(err).Str("path", path).Msg("error walking file")
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
 			logger.Error().Err(err).Str("path", path).Msg("error walking file")
 			return nil
 		}
@@ -34,6 +42,13 @@ func WalkDirs(roots []string, logger zerolog.Logger) ([]FileEntry, error) {
 		if _, ok := seen[path]; ok {
 			return nil
 		}
+		if identity, ok := getFileIdentity(path, info); ok {
+			if _, found := seenIdentities[identity]; found {
+				seen[path] = struct{}{}
+				return nil
+			}
+			seenIdentities[identity] = struct{}{}
+		}
 		seen[path] = struct{}{}
 		files = append(files, FileEntry{Path: path, Size: info.Size()})
 		return nil
@@ -42,7 +57,11 @@ func WalkDirs(roots []string, logger zerolog.Logger) ([]FileEntry, error) {
 	var errs []error
 	canonical := make([]string, 0, len(roots))
 	for _, r := range roots {
-		c, err := canonicalRoot(r)
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
+			break
+		}
+		c, err := canonicalRoot(ctx, r)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -50,38 +69,35 @@ func WalkDirs(roots []string, logger zerolog.Logger) ([]FileEntry, error) {
 		canonical = append(canonical, c)
 	}
 
-	for _, r := range dedupeContainedRoots(canonical) {
-		root = r
-		if err := filepath.Walk(root, walker); err != nil {
+	deduped, dedupeErr := dedupeContainedRoots(ctx, canonical)
+	if dedupeErr != nil {
+		errs = append(errs, dedupeErr)
+	}
+	for _, r := range deduped {
+		if err := ctx.Err(); err != nil {
 			errs = append(errs, err)
+			break
+		}
+		root = r
+		if err := filepath.WalkDir(root, walker); err != nil {
+			errs = append(errs, err)
+		}
+		if err := ctx.Err(); err != nil {
+			break
 		}
 	}
 	return files, errors.Join(errs...)
 }
 
-// dedupeContainedRoots removes exact duplicates and any root nested inside
-// another root in the list, so filepath.Walk is only invoked once per
-// distinct subtree even when overlapping or repeated roots are supplied.
-// roots must already be canonical (absolute, symlink-resolved) paths.
-//
-// Containment is checked against every other retained root (not just the
-// previously kept one) using real filesystem identity rather than string
-// comparison: lexical sorting plus a string-prefix/adjacency check is fooled
-// by sort order (e.g. ".../a", ".../a!", ".../a/sub" sort in that order,
-// separating "a" from its descendant "a/sub") and by paths that are spelled
-// differently but denote the same directory, e.g. on a case-insensitive
-// filesystem -- the default for both macOS/APFS and Windows, not just
-// Windows.
-//
-// Filesystem identity lookups (os.Stat) are memoized in identityCache, keyed
-// by path, so the same ancestor is never stat'd more than once even though
-// it may be visited while checking many different (path, root) pairs. Without
-// this, the pairwise checks below would cost O(roots^2 * average-path-depth)
-// syscalls; with it, each unique path encountered is stat'd exactly once.
-func dedupeContainedRoots(roots []string) []string {
+// dedupeContainedRoots removes duplicate and nested roots. Roots must already
+// be absolute and symlink-resolved; containment uses filesystem identity.
+func dedupeContainedRoots(ctx context.Context, roots []string) ([]string, error) {
 	unique := make([]string, 0, len(roots))
 	seen := make(map[string]struct{}, len(roots))
 	for _, r := range roots {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if _, ok := seen[r]; ok {
 			continue
 		}
@@ -92,12 +108,29 @@ func dedupeContainedRoots(roots []string) []string {
 	cache := make(identityCache, len(unique))
 	result := make([]string, 0, len(unique))
 	for i, r := range unique {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		contained := false
 		for j, other := range unique {
-			if i == j || !cache.isWithinRoot(r, other) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if i == j {
 				continue
 			}
-			if cache.isWithinRoot(other, r) {
+			within, err := cache.isWithinRoot(ctx, r, other)
+			if err != nil {
+				return nil, err
+			}
+			if !within {
+				continue
+			}
+			within, err = cache.isWithinRoot(ctx, other, r)
+			if err != nil {
+				return nil, err
+			}
+			if within {
 				// r and other are within each other, meaning they denote the
 				// same directory on disk despite being spelled differently
 				// (e.g. case variants on a case-insensitive filesystem). Keep
@@ -114,16 +147,13 @@ func dedupeContainedRoots(roots []string) []string {
 			result = append(result, r)
 		}
 	}
-	return result
+	return result, nil
 }
 
-// identityCache memoizes os.Stat results by path so repeated lookups of the
-// same file (e.g. a shared ancestor directory visited while checking
-// containment for many different root pairs) cost a single syscall.
+// identityCache caches filesystem identity lookups by path.
 type identityCache map[string]os.FileInfo
 
-// stat returns the cached os.FileInfo for path, populating the cache on a
-// miss. The second return value is false if path could not be stat'd.
+// stat returns cached file information and reports whether the lookup worked.
 func (c identityCache) stat(path string) (os.FileInfo, bool) {
 	if info, ok := c[path]; ok {
 		return info, info != nil
@@ -137,39 +167,34 @@ func (c identityCache) stat(path string) (os.FileInfo, bool) {
 	return info, true
 }
 
-// isWithinRoot reports whether path is root itself or a descendant of it, by
-// walking up path's real ancestor chain and comparing on-disk file identity
-// (device + inode, via os.SameFile) at each step. This is deliberately
-// filesystem-identity based rather than string based, so paths that are
-// spelled differently but denote the same directory -- on a case-insensitive
-// filesystem (macOS/APFS and Windows by default), via a bind mount, or a
-// hard-linked directory -- are still recognized correctly.
-func (c identityCache) isWithinRoot(path, root string) bool {
+// isWithinRoot reports whether path is root or one of its descendants, using
+// filesystem identity rather than path strings.
+func (c identityCache) isWithinRoot(ctx context.Context, path, root string) (bool, error) {
 	rootInfo, ok := c.stat(root)
 	if !ok {
-		return false
+		return false, nil
 	}
 	for {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		if info, ok := c.stat(path); ok && os.SameFile(info, rootInfo) {
-			return true
+			return true, nil
 		}
 		parent := filepath.Dir(path)
 		if parent == path {
-			return false
+			return false, nil
 		}
 		path = parent
 	}
 }
 
-// canonicalRoot resolves root to an absolute, symlink-free path so that
-// equivalent roots (relative vs. absolute, or reached via a symlink) share a
-// single spelling, and so that a root which is itself a directory symlink is
-// actually walked instead of being skipped as non-regular. Resolution
-// failures (a missing root, a dangling symlink, etc.) are returned as an
-// error rather than silently falling back to an unresolved path: filepath.Walk
-// would otherwise Lstat that path directly, and for a dangling symlink it
-// would skip it as non-regular and report success with zero files.
-func canonicalRoot(root string) (string, error) {
+// canonicalRoot returns an absolute, symlink-free root. Resolution failures
+// are returned so missing and dangling roots do not appear empty.
+func canonicalRoot(ctx context.Context, root string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return "", err

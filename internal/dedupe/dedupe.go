@@ -2,6 +2,7 @@ package dedupe
 
 import (
 	"bytes"
+	"context"
 	"sort"
 	"sync"
 
@@ -36,8 +37,15 @@ func FilterBySize(files []FileEntry) (candidates []FileEntry, skipped int) {
 // goroutines, and returns duplicate sets sorted by hash for deterministic output.
 // If some roots fail to walk, files successfully collected from the others are
 // still processed; the walk error is returned alongside whatever results were found.
-func Find(roots []string, workers int, logger zerolog.Logger) ([]DuplicateSet, Stats, error) {
-	files, walkErr := WalkDirs(roots, logger)
+// Cancellation stops the scan and returns the context error.
+func Find(ctx context.Context, roots []string, workers int, logger zerolog.Logger) ([]DuplicateSet, Stats, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, Stats{}, err
+	}
+	files, walkErr := WalkDirs(ctx, roots, logger)
+	if err := ctx.Err(); err != nil {
+		return nil, Stats{}, err
+	}
 	if walkErr != nil {
 		logger.Error().Err(walkErr).Msg("one or more roots could not be fully scanned")
 	}
@@ -60,7 +68,7 @@ func Find(roots []string, workers int, logger zerolog.Logger) ([]DuplicateSet, S
 
 	hashMap := make(map[HashType][]string)
 	sizeMap := make(map[HashType]int64)
-	for r := range hashAll(candidates, workers, logger) {
+	for r := range progressiveHashAll(ctx, candidates, workers, logger) {
 		hashMap[r.Hash] = append(hashMap[r.Hash], r.Path)
 		if _, found := sizeMap[r.Hash]; !found {
 			sizeMap[r.Hash] = r.Size
@@ -72,18 +80,59 @@ func Find(roots []string, workers int, logger zerolog.Logger) ([]DuplicateSet, S
 		if len(paths) > 1 {
 			sort.Strings(paths)
 			dupes = append(dupes, DuplicateSet{Hash: hash, Size: sizeMap[hash], Paths: paths})
+			stats.DuplicateGroups++
+			stats.DuplicateFiles += len(paths)
 		}
 	}
 	sort.Slice(dupes, func(i, j int) bool {
 		return bytes.Compare(dupes[i].Hash[:], dupes[j].Hash[:]) < 0
 	})
 
+	if err := ctx.Err(); err != nil {
+		return dupes, stats, err
+	}
 	return dupes, stats, walkErr
 }
 
 // hashAll hashes candidates concurrently using a fixed-size worker pool,
 // streaming results back to the caller instead of buffering them all in memory.
-func hashAll(candidates []FileEntry, workers int, logger zerolog.Logger) <-chan Result {
+// Cancellation stops workers and closes the result channel.
+func hashAll(ctx context.Context, candidates []FileEntry, workers int, logger zerolog.Logger) <-chan Result {
+	return hashAllWith(ctx, candidates, workers, logger, HashFile)
+}
+
+func progressiveHashAll(ctx context.Context, candidates []FileEntry, workers int, logger zerolog.Logger) <-chan Result {
+	results := make(chan Result, workers)
+	go func() {
+		defer close(results)
+		groups := make(map[prefixKey][]FileEntry)
+		for result := range hashAllWith(ctx, candidates, workers, logger, hashPrefix) {
+			key := prefixKey{hash: result.Hash, size: result.Size}
+			groups[key] = append(groups[key], FileEntry{Path: result.Path, Size: result.Size})
+		}
+		var collisions []FileEntry
+		for _, group := range groups {
+			if len(group) > 1 {
+				collisions = append(collisions, group...)
+			}
+		}
+		for result := range hashAll(ctx, collisions, workers, logger) {
+			select {
+			case results <- result:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return results
+}
+
+type prefixKey struct {
+	hash HashType
+	size int64
+}
+
+func hashAllWith(ctx context.Context, candidates []FileEntry, workers int, logger zerolog.Logger, hashFile func(context.Context, string) (HashType, error)) <-chan Result {
 	if workers < 1 {
 		workers = 1
 	}
@@ -95,15 +144,29 @@ func hashAll(candidates []FileEntry, workers int, logger zerolog.Logger) <-chan 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for fe := range jobs {
+			for {
+				var fe FileEntry
+				var ok bool
+				select {
+				case <-ctx.Done():
+					return
+				case fe, ok = <-jobs:
+					if !ok {
+						return
+					}
+				}
 				logger.Debug().Str("path", fe.Path).Int64("size", fe.Size).Msg("scanning file")
-				hash, err := HashFile(fe.Path)
+				hash, err := hashFile(ctx, fe.Path)
 				if err != nil {
 					logger.Error().Err(err).Str("path", fe.Path).Msg("error hashing file")
 					continue
 				}
 				logger.Debug().Str("path", fe.Path).Int64("size", fe.Size).Msgf("%x", hash)
-				results <- Result{Path: fe.Path, Size: fe.Size, Hash: hash}
+				select {
+				case results <- Result{Path: fe.Path, Size: fe.Size, Hash: hash}:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}()
 	}
@@ -115,7 +178,12 @@ func hashAll(candidates []FileEntry, workers int, logger zerolog.Logger) <-chan 
 
 	go func() {
 		for _, fe := range candidates {
-			jobs <- fe
+			select {
+			case jobs <- fe:
+			case <-ctx.Done():
+				close(jobs)
+				return
+			}
 		}
 		close(jobs)
 	}()

@@ -1,8 +1,10 @@
 package dedupe
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -141,7 +143,21 @@ func TestWalkDirs(t *testing.T) {
 			wantFiles: 1,
 		},
 		{
-			// filepath.Walk lstats (never dereferences) the root it's given,
+			name: "hard-linked files are collected once",
+			setup: func(t *testing.T) []string {
+				dir := t.TempDir()
+				original := filepath.Join(dir, "original.txt")
+				link := filepath.Join(dir, "link.txt")
+				writeFile(t, original, "same content")
+				if err := os.Link(original, link); err != nil {
+					t.Skipf("hard links not supported: %v", err)
+				}
+				return []string{dir}
+			},
+			wantFiles: 1,
+		},
+		{
+			// filepath.WalkDir lstats (never dereferences) the root it's given,
 			// so a dangling root symlink must surface as an error rather
 			// than a silent zero-file success.
 			name: "dangling symlink root returns an error",
@@ -160,7 +176,7 @@ func TestWalkDirs(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			roots := tc.setup(t)
-			files, err := WalkDirs(roots, zerolog.Nop())
+			files, err := WalkDirs(context.Background(), roots, zerolog.Nop())
 			if tc.wantErr {
 				require.Error(t, err)
 				require.Empty(t, files)
@@ -170,6 +186,17 @@ func TestWalkDirs(t *testing.T) {
 			require.Len(t, files, tc.wantFiles)
 		})
 	}
+}
+
+func TestWalkDirsCanceledDuringWalk(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.txt"), "aaa")
+	writeFile(t, filepath.Join(dir, "b.txt"), "bbb")
+	ctx := cancelAfterErrChecks(context.Background(), 7)
+
+	files, err := WalkDirs(ctx, []string{dir}, zerolog.Nop())
+	require.ErrorIs(t, err, context.Canceled)
+	require.Less(t, len(files), 2)
 }
 
 func TestDedupeContainedRootsKeepsOneOfCaseInsensitiveDuplicateRoots(t *testing.T) {
@@ -189,7 +216,8 @@ func TestDedupeContainedRootsKeepsOneOfCaseInsensitiveDuplicateRoots(t *testing.
 		t.Skip("filesystem is case-sensitive")
 	}
 
-	got := dedupeContainedRoots([]string{upper, lower})
+	got, err := dedupeContainedRoots(context.Background(), []string{upper, lower})
+	require.NoError(t, err)
 	require.Len(t, got, 1)
 }
 
@@ -206,7 +234,8 @@ func TestDedupeContainedRootsHandlesLexicallyInterleavedSibling(t *testing.T) {
 	// against the previously kept root" check would let "sub" slip through
 	// as a redundant, separately-walked root instead of being recognized as
 	// already covered by "a".
-	got := dedupeContainedRoots([]string{a, aBang, sub})
+	got, err := dedupeContainedRoots(context.Background(), []string{a, aBang, sub})
+	require.NoError(t, err)
 	require.ElementsMatch(t, []string{a, aBang}, got)
 }
 
@@ -246,13 +275,13 @@ func TestWalkDirsSkipsUnreadableSubdirectory(t *testing.T) {
 	require.NoError(t, os.Chmod(locked, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
-	files, err := WalkDirs([]string{dir}, zerolog.Nop())
+	files, err := WalkDirs(context.Background(), []string{dir}, zerolog.Nop())
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 }
 
 // TestWalkDirsUnreadableRootReturnsError exercises the walker's root-error
-// branch: an unreadable root directory fails during filepath.Walk itself
+// branch: an unreadable root directory fails during filepath.WalkDir itself
 // (as opposed to failing earlier during canonicalization).
 func TestWalkDirsUnreadableRootReturnsError(t *testing.T) {
 	skipIfPermissionsNotEnforced(t)
@@ -261,7 +290,7 @@ func TestWalkDirsUnreadableRootReturnsError(t *testing.T) {
 	require.NoError(t, os.Chmod(dir, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
-	files, err := WalkDirs([]string{dir}, zerolog.Nop())
+	files, err := WalkDirs(context.Background(), []string{dir}, zerolog.Nop())
 	require.Error(t, err)
 	require.Empty(t, files)
 }
@@ -275,6 +304,31 @@ func TestIdentityCacheStatMissingPath(t *testing.T) {
 
 func TestIsWithinRootMissingRoot(t *testing.T) {
 	cache := make(identityCache)
-	within := cache.isWithinRoot(t.TempDir(), filepath.Join(t.TempDir(), "does-not-exist"))
+	within, err := cache.isWithinRoot(context.Background(), t.TempDir(), filepath.Join(t.TempDir(), "does-not-exist"))
+	require.NoError(t, err)
 	require.False(t, within)
+}
+
+type cancelAfterErrContext struct {
+	context.Context
+	remaining int
+	done      chan struct{}
+	once      sync.Once
+}
+
+func cancelAfterErrChecks(parent context.Context, checks int) context.Context {
+	return &cancelAfterErrContext{Context: parent, remaining: checks, done: make(chan struct{})}
+}
+
+func (c *cancelAfterErrContext) Err() error {
+	if c.remaining > 0 {
+		c.remaining--
+		return nil
+	}
+	c.once.Do(func() { close(c.done) })
+	return context.Canceled
+}
+
+func (c *cancelAfterErrContext) Done() <-chan struct{} {
+	return c.done
 }

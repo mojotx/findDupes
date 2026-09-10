@@ -26,7 +26,9 @@ type DuplicateSet struct {
 
 // Stats summarizes a Find run.
 type Stats struct {
-	TotalFiles int
-	Skipped    int
-	Candidates int
+	TotalFiles      int
+	Skipped         int
+	Candidates      int
+	DuplicateGroups int
+	DuplicateFiles  int
 }

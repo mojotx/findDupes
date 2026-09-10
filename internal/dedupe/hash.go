@@ -1,30 +1,68 @@
 package dedupe
 
 import (
+	"context"
 	"crypto/sha256"
+	"errors"
 	"io"
 	"os"
 
 	"github.com/rs/zerolog/log"
 )
 
+const hashPrefixSize = 4 << 10
+
 // HashFile computes the SHA-256 hash of the file at path.
-func HashFile(path string) (HashType, error) {
+func HashFile(ctx context.Context, path string) (HashType, error) {
+	return hashFile(ctx, path, 0)
+}
+
+func hashPrefix(ctx context.Context, path string) (HashType, error) {
+	return hashFile(ctx, path, hashPrefixSize)
+}
+
+func hashFile(ctx context.Context, path string, limit int64) (HashType, error) {
+	if err := ctx.Err(); err != nil {
+		return HashType{}, err
+	}
 	var hash HashType
 	f, err := os.Open(path)
 	if err != nil {
 		return hash, err
 	}
+	stop := context.AfterFunc(ctx, func() {
+		_ = f.Close()
+	})
 	defer func() {
-		if err := f.Close(); err != nil {
+		stop()
+		if err := f.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
 			log.Error().Err(err).Msgf("failed to close file %s", path)
 		}
 	}()
 
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	reader := io.Reader(contextReader{ctx: ctx, reader: f})
+	if limit > 0 {
+		reader = io.LimitReader(reader, limit)
+	}
+	if _, err := io.Copy(h, reader); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return hash, ctxErr
+		}
 		return hash, err
 	}
 	copy(hash[:], h.Sum(nil))
 	return hash, nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }

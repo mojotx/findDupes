@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fatih/color"
@@ -82,6 +84,24 @@ func TestPrintDuplicatesEmpty(t *testing.T) {
 	require.Equal(t, "\n", out)
 }
 
+func TestPrintDuplicatesJSON(t *testing.T) {
+	dupes := []dedupe.DuplicateSet{{
+		Hash:  dedupe.HashType{0xde, 0xad},
+		Size:  42,
+		Paths: []string{"/tmp/a.txt", "/tmp/b.txt"},
+	}}
+
+	var out strings.Builder
+	require.NoError(t, printDuplicatesJSON(&out, dupes, nil))
+	require.JSONEq(t, `{"hash":"dead000000000000000000000000000000000000000000000000000000000000","size":42,"paths":["/tmp/a.txt","/tmp/b.txt"]}`, out.String())
+}
+
+func TestPrintStats(t *testing.T) {
+	var out strings.Builder
+	printStats(&out, dedupe.Stats{TotalFiles: 10, Skipped: 4, Candidates: 6, DuplicateGroups: 2, DuplicateFiles: 4})
+	require.Equal(t, "files=10 skipped=4 candidates=6 duplicate_groups=2 duplicate_files=4\n", out.String())
+}
+
 func TestRunFind(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "dup1.txt"), []byte("same"), 0o600))
@@ -133,6 +153,6 @@ func TestExecute(t *testing.T) {
 	t.Cleanup(func() { rootCmd.SetArgs(nil) })
 
 	_ = captureStdout(t, func() {
-		require.NoError(t, Execute())
+		require.NoError(t, Execute(context.Background()))
 	})
 }
