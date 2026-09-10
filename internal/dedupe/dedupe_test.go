@@ -2,6 +2,7 @@ package dedupe
 
 import (
 	"bytes"
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -15,7 +16,7 @@ func TestHashAllClampsNonPositiveWorkers(t *testing.T) {
 	candidates := []FileEntry{{Path: filepath.Join(dir, "a.txt"), Size: 3}}
 
 	var results []Result
-	for r := range hashAll(candidates, 0, zerolog.Nop()) {
+	for r := range hashAll(context.Background(), candidates, 0, zerolog.Nop()) {
 		results = append(results, r)
 	}
 	require.Len(t, results, 1)
@@ -26,7 +27,7 @@ func TestHashAllSkipsUnhashableFile(t *testing.T) {
 	candidates := []FileEntry{{Path: missing, Size: 3}}
 
 	var results []Result
-	for r := range hashAll(candidates, 2, zerolog.Nop()) {
+	for r := range hashAll(context.Background(), candidates, 2, zerolog.Nop()) {
 		results = append(results, r)
 	}
 	require.Empty(t, results)
@@ -49,7 +50,7 @@ func TestFind(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "dup2.txt"), "same content")
 	writeFile(t, filepath.Join(dir, "unique.txt"), "one of a kind")
 
-	dupes, stats, err := Find([]string{dir}, 2, zerolog.Nop())
+	dupes, stats, err := Find(context.Background(), []string{dir}, 2, zerolog.Nop())
 	require.NoError(t, err)
 	require.Equal(t, 3, stats.TotalFiles)
 	require.Equal(t, 1, stats.Skipped)
@@ -57,12 +58,22 @@ func TestFind(t *testing.T) {
 	require.Len(t, dupes[0].Paths, 2)
 }
 
+func TestFindCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	dupes, stats, err := Find(ctx, []string{t.TempDir()}, 2, zerolog.Nop())
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, dupes)
+	require.Equal(t, Stats{}, stats)
+}
+
 func TestFindNoDuplicates(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "one.txt"), "aaa")
 	writeFile(t, filepath.Join(dir, "two.txt"), "bbb")
 
-	dupes, _, err := Find([]string{dir}, 2, zerolog.Nop())
+	dupes, _, err := Find(context.Background(), []string{dir}, 2, zerolog.Nop())
 	require.NoError(t, err)
 	require.Empty(t, dupes)
 }
@@ -73,7 +84,7 @@ func TestFindClampsNonPositiveWorkers(t *testing.T) {
 		writeFile(t, filepath.Join(dir, "dup1.txt"), "same content")
 		writeFile(t, filepath.Join(dir, "dup2.txt"), "same content")
 
-		dupes, _, err := Find([]string{dir}, workers, zerolog.Nop())
+		dupes, _, err := Find(context.Background(), []string{dir}, workers, zerolog.Nop())
 		require.NoError(t, err)
 		require.Len(t, dupes, 1)
 		require.Len(t, dupes[0].Paths, 2)
@@ -81,7 +92,7 @@ func TestFindClampsNonPositiveWorkers(t *testing.T) {
 }
 
 func TestFindMissingRoot(t *testing.T) {
-	_, _, err := Find([]string{filepath.Join(t.TempDir(), "definitely-missing-root")}, 2, zerolog.Nop())
+	_, _, err := Find(context.Background(), []string{filepath.Join(t.TempDir(), "definitely-missing-root")}, 2, zerolog.Nop())
 	require.Error(t, err)
 }
 
@@ -92,7 +103,7 @@ func TestFindPartialRootFailureStillReturnsResults(t *testing.T) {
 
 	missing := filepath.Join(t.TempDir(), "definitely-missing-root")
 
-	dupes, _, err := Find([]string{dir, missing}, 2, zerolog.Nop())
+	dupes, _, err := Find(context.Background(), []string{dir, missing}, 2, zerolog.Nop())
 	require.Error(t, err)
 	require.Len(t, dupes, 1)
 }
@@ -107,7 +118,7 @@ func TestFindSortsMultipleDuplicateGroupsByHash(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "b1.txt"), "group b")
 	writeFile(t, filepath.Join(dir, "b2.txt"), "group b")
 
-	dupes, _, err := Find([]string{dir}, 2, zerolog.Nop())
+	dupes, _, err := Find(context.Background(), []string{dir}, 2, zerolog.Nop())
 	require.NoError(t, err)
 	require.Len(t, dupes, 2)
 	for groupIndex := 1; groupIndex < len(dupes); groupIndex++ {

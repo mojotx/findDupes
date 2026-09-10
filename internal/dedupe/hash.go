@@ -1,6 +1,7 @@
 package dedupe
 
 import (
+	"context"
 	"crypto/sha256"
 	"io"
 	"os"
@@ -9,7 +10,10 @@ import (
 )
 
 // HashFile computes the SHA-256 hash of the file at path.
-func HashFile(path string) (HashType, error) {
+func HashFile(ctx context.Context, path string) (HashType, error) {
+	if err := ctx.Err(); err != nil {
+		return HashType{}, err
+	}
 	var hash HashType
 	f, err := os.Open(path)
 	if err != nil {
@@ -22,9 +26,21 @@ func HashFile(path string) (HashType, error) {
 	}()
 
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	if _, err := io.Copy(h, contextReader{ctx: ctx, reader: f}); err != nil {
 		return hash, err
 	}
 	copy(hash[:], h.Sum(nil))
 	return hash, nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }

@@ -1,6 +1,7 @@
 package dedupe
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -11,11 +12,14 @@ import (
 
 // WalkDirs collects regular files under roots. Per-file errors are logged and
 // skipped; root errors are returned. Overlapping roots are walked once.
-func WalkDirs(roots []string, logger zerolog.Logger) ([]FileEntry, error) {
+func WalkDirs(ctx context.Context, roots []string, logger zerolog.Logger) ([]FileEntry, error) {
 	var files []FileEntry
 	seen := make(map[string]struct{})
 	var root string
 	walker := func(path string, entry fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			if path == root {
 				return err
@@ -54,6 +58,10 @@ func WalkDirs(roots []string, logger zerolog.Logger) ([]FileEntry, error) {
 	}
 
 	for _, r := range dedupeContainedRoots(canonical) {
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
+			break
+		}
 		root = r
 		if err := filepath.WalkDir(root, walker); err != nil {
 			errs = append(errs, err)

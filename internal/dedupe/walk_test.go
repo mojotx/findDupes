@@ -1,6 +1,7 @@
 package dedupe
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -160,7 +161,7 @@ func TestWalkDirs(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			roots := tc.setup(t)
-			files, err := WalkDirs(roots, zerolog.Nop())
+			files, err := WalkDirs(context.Background(), roots, zerolog.Nop())
 			if tc.wantErr {
 				require.Error(t, err)
 				require.Empty(t, files)
@@ -246,7 +247,7 @@ func TestWalkDirsSkipsUnreadableSubdirectory(t *testing.T) {
 	require.NoError(t, os.Chmod(locked, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
-	files, err := WalkDirs([]string{dir}, zerolog.Nop())
+	files, err := WalkDirs(context.Background(), []string{dir}, zerolog.Nop())
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 }
@@ -261,7 +262,7 @@ func TestWalkDirsUnreadableRootReturnsError(t *testing.T) {
 	require.NoError(t, os.Chmod(dir, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
-	files, err := WalkDirs([]string{dir}, zerolog.Nop())
+	files, err := WalkDirs(context.Background(), []string{dir}, zerolog.Nop())
 	require.Error(t, err)
 	require.Empty(t, files)
 }

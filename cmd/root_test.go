@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -133,6 +134,6 @@ func TestExecute(t *testing.T) {
 	t.Cleanup(func() { rootCmd.SetArgs(nil) })
 
 	_ = captureStdout(t, func() {
-		require.NoError(t, Execute())
+		require.NoError(t, Execute(context.Background()))
 	})
 }

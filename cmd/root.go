@@ -2,6 +2,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"runtime"
@@ -36,8 +37,8 @@ func init() {
 }
 
 // Execute runs the root command.
-func Execute() error {
-	return rootCmd.Execute()
+func Execute(ctx context.Context) error {
+	return rootCmd.ExecuteContext(ctx)
 }
 
 func runFind(cmd *cobra.Command, args []string) error {
@@ -55,7 +56,11 @@ func runFind(cmd *cobra.Command, args []string) error {
 	})
 	logger := log.Logger
 
-	dupes, _, err := dedupe.Find(args, workers, logger)
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	dupes, _, err := dedupe.Find(ctx, args, workers, logger)
 	printDuplicates(dupes)
 
 	logger.Info().Msgf("Elapsed time: %s", time.Since(startTime))
